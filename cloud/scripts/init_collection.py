@@ -1,5 +1,8 @@
 import os
 import sys
+from dotenv import load_dotenv
+load_dotenv()
+
 from qdrant_client import QdrantClient, models
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")

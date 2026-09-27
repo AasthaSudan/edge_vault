@@ -120,14 +120,14 @@ cd edge_vault
 
 # Create and activate Python virtual environment
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows PowerShell: .\.venv\Scripts\Activate.ps1
 
 # Install dependencies and local edge package
 pip install -r requirements.txt
 pip install -e ./edge
 
 # Provision offline embedding models (cached to data/models/)
-make provision
+make provision  # Or on Windows: python edge/scripts/provision_models.py
 ```
 
 ### 2. Start Services
@@ -365,15 +365,35 @@ make demo
 
 ---
 
+## Phase Specifications & Architecture Docs
+
+Detailed architectural specifications, verification benchmarks, and design blueprints are organized in [`docs/`](docs/):
+
+- [Phase 1: Edge Core](docs/PHASE_1_EDGE_CORE.md) — Local hybrid vector search, dual shards, sub-50ms CPU execution.
+- [Phase 2: AI Memory Gate & Evolving Memory](docs/PHASE_2_MEMORY_GATE.md) — Regex PII filter, local LLM classifier, dedup, and TTL.
+- [Phase 3: Edge-Cloud Sync & Conflicts](docs/PHASE_3_EDGE_CLOUD_SYNC.md) — SQLite WAL outbox, push-before-pull sync, distributed conflict resolution.
+- [Phase 4: Dashboard, Observability & Demo](docs/PHASE_4_DASHBOARD_DEMO.md) — Next.js 14 console, live SSE stream, privacy audit proof.
+
+---
+
 ## Project Structure
 
 ```
 edge_vault/
 ├── Makefile                      # CLI shortcuts for setup, run, test, and demo
 ├── docker-compose.yml            # Qdrant cluster setup (ports 6333, 6334)
-├── requirements.txt              # Python dependencies
+├── requirements.txt              # Unified Python dependencies
+├── .env.example                  # Root environment template
+├── .env                          # Active root environment configuration
+├── docs/                         # Phase specifications & architecture documentation
+│   ├── PHASE_1_EDGE_CORE.md
+│   ├── PHASE_2_MEMORY_GATE.md
+│   ├── PHASE_3_EDGE_CLOUD_SYNC.md
+│   └── PHASE_4_DASHBOARD_DEMO.md
 │
 ├── edge/                         # Edge Node Service (FastAPI :7001)
+│   ├── .env.example              # Edge-specific env template
+│   ├── .env                      # Edge-specific active configuration
 │   ├── edge/
 │   │   ├── main.py               # Application entrypoint & lifespan
 │   │   ├── config.py             # Settings and environment defaults
@@ -387,37 +407,53 @@ edge_vault/
 │   └── tests/                    # Benchmark and validation test suites
 │
 ├── cloud/                        # Cloud Sync API (:8080)
+│   ├── .env.example              # Cloud-specific env template
+│   ├── .env                      # Cloud-specific active configuration
 │   ├── sync_api/
 │   │   └── main.py               # Category guard, snapshot provider, privacy stats
 │   └── scripts/
 │       └── init_collection.py    # Schema initialization for central Qdrant cluster
 │
 └── dashboard/                    # Next.js 14 Observability Dashboard (:3000)
+    ├── .env.example              # Dashboard env template
+    ├── .env.local                # Dashboard local active configuration
     ├── app/                      # App Router pages (Overview, Search, Sync, Conflicts)
     ├── components/               # UI components, top-bar offline toggle, live stream
-    └── hooks/                    # TanStack Query & SSE subscription hooks
+    └── lib/                      # Client API & SSE subscription helpers
 ```
 
 ---
 
 ## Configuration
 
-Environment variables can be defined in a `.env` file or exported directly:
+Environment variables can be defined in `.env` files across the project:
 
+### Root & Edge Node (`.env` or `edge/.env`)
 ```bash
-# Edge Node Settings
 DEVICE_ID=device-a
+AUTHOR=Tech A
+DATA_ROOT=./data
 PORT=7001
-DATA_DIR=data/device-a
-AUTHOR=Tech-A
-OLLAMA_BASE_URL=http://localhost:11434
+DENSE_MODEL=BAAI/bge-small-en-v1.5
+DENSE_DIM=384
+SYNC_API_URL=http://localhost:8080
 OLLAMA_MODEL=gemma3:1b
+DEDUP_THRESHOLD=0.92
+ROUTINE_TTL_DAYS=14
+```
 
-# Cloud Settings
-CLOUD_SYNC_URL=http://localhost:8080
-QDRANT_HOST=localhost
-QDRANT_PORT=6333
-SHARED_COLLECTION=shared_memory
+### Cloud Sync API (`cloud/.env`)
+```bash
+QDRANT_URL=http://localhost:6333
+QDRANT_API_KEY=
+PORT=8080
+```
+
+### Web Dashboard (`dashboard/.env.local`)
+```bash
+NEXT_PUBLIC_EDGE_API=http://localhost:7001
+NEXT_PUBLIC_CLOUD_API=http://localhost:8080
+PORT=3000
 ```
 
 ---
