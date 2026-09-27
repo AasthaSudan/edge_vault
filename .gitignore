@@ -1,0 +1,39 @@
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python caches & build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Node & Next.js artifacts
+node_modules/
+dashboard/node_modules/
+dashboard/.next/
+dashboard/out/
+.next/
+out/
+*.log
+
+# EdgeVault local databases, models & shards
+data/
+edge/data/
+*.db
+*.db-shm
+*.db-wal
+*.snapshot
+
+# Environment configurations
+.env
+.env.local
+.env.*.local
+
+# OS generated
+.DS_Store
+Thumbs.db
