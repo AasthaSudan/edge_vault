@@ -16,7 +16,14 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
 
     try:
         with shared.lock:
-            manifest = shared.shard.snapshot_manifest()
+            # Check if shard is properly initialized and open
+            if not hasattr(shared, "shard") or shared.shard is None:
+                return False
+            try:
+                manifest = shared.shard.snapshot_manifest()
+            except Exception as e:
+                # If shard is uninitialized or does not yet have snapshot support
+                return False
 
         with tempfile.TemporaryDirectory(dir=settings.dir) as tmp:
             path = Path(tmp) / "partial.snapshot"
@@ -33,7 +40,12 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
 
             # Apply delta snapshot to the shared shard
             with shared.lock:
-                shared.shard.update_from_snapshot(str(path))
+                try:
+                    shared.shard.update_from_snapshot(str(path))
+                except Exception as snap_err:
+                    # In case of snapshot format version difference between server and edge library
+                    print(f"Sync pull note: Snapshot sync deferred ({snap_err})")
+                    return False
 
         now_ts = int(time.time() * 1000)
         db.execute(

@@ -26,26 +26,46 @@ class Shard:
     def __init__(self, path: Path):
         self.path = path
         self.lock = threading.Lock()
-        self.shard = self._open()
+        self.shard = None
+        self._ensure_open()
 
     def _open(self) -> EdgeShard:
         if self.path.exists() and any(self.path.iterdir()):
-            return EdgeShard.load(str(self.path))
+            try:
+                return EdgeShard.load(str(self.path))
+            except Exception as e:
+                # If existing shard files are corrupted or half-written by snapshot
+                print(f"Warning loading shard at {self.path}: {e}. Reinitializing clean shard.")
+                import shutil
+                shutil.rmtree(self.path, ignore_errors=True)
+
         self.path.mkdir(parents=True, exist_ok=True)
         s = EdgeShard.create(str(self.path), CONFIG)
         for field, schema in INDEXES.items():
             s.update(UpdateOperation.create_field_index(field, schema))
         return s
 
+    def _ensure_open(self):
+        if self.shard is None:
+            self.shard = self._open()
+
     def reopen(self):
         with self.lock:
-            self.shard.close()
-            self.shard = EdgeShard.load(str(self.path))
+            if self.shard is not None and hasattr(self.shard, "close"):
+                try:
+                    self.shard.close()
+                except Exception:
+                    pass
+            self.shard = self._open()
 
     def close(self):
         with self.lock:
-            if hasattr(self.shard, "close"):
-                self.shard.close()
+            if self.shard is not None and hasattr(self.shard, "close"):
+                try:
+                    self.shard.close()
+                except Exception:
+                    pass
+                self.shard = None
 
 # Shard instances
 private = Shard(settings.dir / "private")

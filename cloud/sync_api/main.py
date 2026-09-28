@@ -15,7 +15,8 @@ QDRANT_URL = os.getenv("QDRANT_URL", "http://localhost:6333")
 KEY = os.getenv("QDRANT_API_KEY", None)
 COLL = "shared_memory"
 
-q = QdrantClient(url=QDRANT_URL, api_key=KEY)
+# Use generous timeout for snapshot operations
+q = QdrantClient(url=QDRANT_URL, api_key=KEY, timeout=120)
 app = FastAPI(title="EdgeVault Cloud Sync API", version="0.1.0")
 
 app.add_middleware(
@@ -89,34 +90,45 @@ def push(body: PushBody):
 
     return {"accepted": accepted, "conflicts": found_conflicts}
 
-@app.get("/snapshot")
-async def get_snapshot():
-    """Create and stream a shard snapshot for edge device bootstrapping."""
+async def _stream_latest_or_new_snapshot():
+    """Retrieve the latest ready shard snapshot, or initiate a new one."""
+    client = httpx.AsyncClient(timeout=120)
     try:
-        snap_desc = q.create_shard_snapshot(COLL, shard_id=0)
-        snap_name = snap_desc.name
-        snap_url = f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots/{snap_name}"
+        # Check existing snapshots first
+        snaps_resp = await client.get(f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots")
+        snaps = snaps_resp.json().get("result", []) if snaps_resp.status_code == 200 else []
 
-        client = httpx.AsyncClient(timeout=120)
+        snap_name = None
+        if snaps:
+            # Most recent snapshot is first
+            snap_name = snaps[0]["name"]
+            # Trigger background creation of fresh snapshot asynchronously for future pulls
+            try:
+                await client.post(f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots?wait=false")
+            except Exception:
+                pass
+        else:
+            # No snapshot exists yet; create one (wait=true)
+            snap_desc = q.create_shard_snapshot(COLL, shard_id=0)
+            snap_name = snap_desc.name
+
+        snap_url = f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots/{snap_name}"
         req = client.build_request("GET", snap_url)
         r = await client.send(req, stream=True)
         return StreamingResponse(r.aiter_bytes(), media_type="application/octet-stream")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Snapshot creation failed: {e}")
+        await client.aclose()
+        raise HTTPException(status_code=500, detail=f"Snapshot retrieval failed: {e}")
+
+@app.get("/snapshot")
+async def get_snapshot():
+    """Create and stream a shard snapshot for edge device bootstrapping."""
+    return await _stream_latest_or_new_snapshot()
 
 @app.post("/snapshot/partial")
 async def get_partial_snapshot(req: Request):
     """Serve delta or latest snapshot to edge devices."""
-    try:
-        snap_desc = q.create_shard_snapshot(COLL, shard_id=0)
-        snap_url = f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots/{snap_desc.name}"
-
-        client = httpx.AsyncClient(timeout=120)
-        req_proxy = client.build_request("GET", snap_url)
-        r = await client.send(req_proxy, stream=True)
-        return StreamingResponse(r.aiter_bytes(), media_type="application/octet-stream")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Partial snapshot failed: {e}")
+    return await _stream_latest_or_new_snapshot()
 
 @app.post("/conflicts/resolve")
 def resolve_conflict(req: ResolveConflictRequest):
