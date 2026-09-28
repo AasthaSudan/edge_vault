@@ -1,7 +1,6 @@
 import time
-import tempfile
-from pathlib import Path
 import httpx
+from qdrant_edge import Point, PointVectors, SparseVector, UpdateOperation
 from edge.config import settings
 from edge.store.shards import shared
 from edge.sync import outbox
@@ -15,37 +14,48 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
         return False
 
     try:
-        with shared.lock:
-            # Check if shard is properly initialized and open
-            if not hasattr(shared, "shard") or shared.shard is None:
-                return False
-            try:
-                manifest = shared.shard.snapshot_manifest()
-            except Exception as e:
-                # If shard is uninitialized or does not yet have snapshot support
-                return False
+        # Check last pull timestamp from SQLite
+        last_pull_row = db.fetch_all("SELECT value FROM settings WHERE key = 'last_pull_at'")
+        since_ts = int(last_pull_row[0]["value"]) if last_pull_row else 0
 
-        with tempfile.TemporaryDirectory(dir=settings.dir) as tmp:
-            path = Path(tmp) / "partial.snapshot"
-            async with client.stream(
-                "POST",
-                f"{settings.sync_api_url}/snapshot/partial",
-                json=manifest if isinstance(manifest, (dict, list)) else {},
-                timeout=60
-            ) as r:
-                r.raise_for_status()
-                with open(path, "wb") as f:
-                    async for chunk in r.aiter_bytes():
-                        f.write(chunk)
+        # Fast delta pull: only fetch new/updated shareable records
+        r = await client.get(
+            f"{settings.sync_api_url}/pull/records",
+            params={"since_ts": since_ts, "limit": 100},
+            timeout=10
+        )
+        if r.status_code != 200:
+            return False
 
-            # Apply delta snapshot to the shared shard
+        data = r.json()
+        records = data.get("records", [])
+
+        if records:
             with shared.lock:
-                try:
-                    shared.shard.update_from_snapshot(str(path))
-                except Exception as snap_err:
-                    # In case of snapshot format version difference between server and edge library
-                    print(f"Sync pull note: Snapshot sync deferred ({snap_err})")
-                    return False
+                for item in records:
+                    pl = item.get("payload", {})
+                    # Defense-in-depth: Never write non-shareable to shared shard
+                    if pl.get("category") != "shareable":
+                        continue
+
+                    # Don't overwrite if it's from this same device and we already have it
+                    if pl.get("device_id") == settings.device_id:
+                        continue
+
+                    v = item.get("vector") or {}
+                    dense_vec = v.get("dense")
+                    sparse_dict = v.get("bm25") or {}
+                    bm25_indices = sparse_dict.get("indices", [])
+                    bm25_values = sparse_dict.get("values", [])
+
+                    pv = PointVectors()
+                    if dense_vec:
+                        pv.set_vector("dense", dense_vec)
+                    if bm25_indices and bm25_values:
+                        pv.set_sparse_vector("bm25", SparseVector(indices=bm25_indices, values=bm25_values))
+
+                    point = Point(id=item["id"], vectors=pv, payload=pl)
+                    shared.shard.update(UpdateOperation.upsert_points([point]))
 
         now_ts = int(time.time() * 1000)
         db.execute(
@@ -55,5 +65,5 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
         emit("sync.pull.ok")
         return True
     except Exception as e:
-        print(f"Sync pull warning: {e}")
+        print(f"Sync pull note: {e}")
         return False

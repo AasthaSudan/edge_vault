@@ -1,4 +1,5 @@
 import threading
+import shutil
 from pathlib import Path
 from qdrant_edge import (
     EdgeShard, EdgeConfig, EdgeVectorParams,
@@ -27,27 +28,22 @@ class Shard:
         self.path = path
         self.lock = threading.Lock()
         self.shard = None
-        self._ensure_open()
+        self._init_or_recover()
 
-    def _open(self) -> EdgeShard:
-        if self.path.exists() and any(self.path.iterdir()):
+    def _init_or_recover(self):
+        with self.lock:
             try:
-                return EdgeShard.load(str(self.path))
+                if self.path.exists() and any(self.path.iterdir()):
+                    self.shard = EdgeShard.load(str(self.path))
+                    return
             except Exception as e:
-                # If existing shard files are corrupted or half-written by snapshot
-                print(f"Warning loading shard at {self.path}: {e}. Reinitializing clean shard.")
-                import shutil
+                print(f"Notice: Cleaning uninitialized or corrupted shard at {self.path} ({e})")
                 shutil.rmtree(self.path, ignore_errors=True)
 
-        self.path.mkdir(parents=True, exist_ok=True)
-        s = EdgeShard.create(str(self.path), CONFIG)
-        for field, schema in INDEXES.items():
-            s.update(UpdateOperation.create_field_index(field, schema))
-        return s
-
-    def _ensure_open(self):
-        if self.shard is None:
-            self.shard = self._open()
+            self.path.mkdir(parents=True, exist_ok=True)
+            self.shard = EdgeShard.create(str(self.path), CONFIG)
+            for field, schema in INDEXES.items():
+                self.shard.update(UpdateOperation.create_field_index(field, schema))
 
     def reopen(self):
         with self.lock:
@@ -56,7 +52,7 @@ class Shard:
                     self.shard.close()
                 except Exception:
                     pass
-            self.shard = self._open()
+            self._init_or_recover()
 
     def close(self):
         with self.lock:

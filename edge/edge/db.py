@@ -19,6 +19,11 @@ def execute(sql: str, params: tuple = ()):
     with _lock:
         return _conn.execute(sql, params)
 
+def fetch_all(sql: str, params: tuple = ()) -> list:
+    with _lock:
+        cur = _conn.execute(sql, params)
+        return cur.fetchall()
+
 def init():
     schema_path = Path(__file__).parent / "schema.sql"
     with open(schema_path, "r", encoding="utf-8") as f:

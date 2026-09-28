@@ -90,25 +90,42 @@ def push(body: PushBody):
 
     return {"accepted": accepted, "conflicts": found_conflicts}
 
+@app.get("/pull/records")
+def pull_records(since_ts: int = 0, limit: int = 100):
+    """Fast, lightweight delta sync for edge devices."""
+    flt = models.Filter(
+        must=[
+            models.FieldCondition(key="category", match=models.MatchValue(value="shareable")),
+            models.FieldCondition(key="updated_at", range=models.Range(gte=since_ts))
+        ]
+    )
+    records, _ = q.scroll(
+        collection_name=COLL,
+        scroll_filter=flt,
+        limit=limit,
+        with_payload=True,
+        with_vectors=True
+    )
+    points_out = []
+    for r in records:
+        points_out.append({
+            "id": r.id,
+            "payload": r.payload,
+            "vector": r.vector
+        })
+    return {"records": points_out, "count": len(points_out)}
+
 async def _stream_latest_or_new_snapshot():
     """Retrieve the latest ready shard snapshot, or initiate a new one."""
     client = httpx.AsyncClient(timeout=120)
     try:
-        # Check existing snapshots first
         snaps_resp = await client.get(f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots")
         snaps = snaps_resp.json().get("result", []) if snaps_resp.status_code == 200 else []
 
         snap_name = None
         if snaps:
-            # Most recent snapshot is first
             snap_name = snaps[0]["name"]
-            # Trigger background creation of fresh snapshot asynchronously for future pulls
-            try:
-                await client.post(f"{QDRANT_URL}/collections/{COLL}/shards/0/snapshots?wait=false")
-            except Exception:
-                pass
         else:
-            # No snapshot exists yet; create one (wait=true)
             snap_desc = q.create_shard_snapshot(COLL, shard_id=0)
             snap_name = snap_desc.name
 
@@ -122,12 +139,10 @@ async def _stream_latest_or_new_snapshot():
 
 @app.get("/snapshot")
 async def get_snapshot():
-    """Create and stream a shard snapshot for edge device bootstrapping."""
     return await _stream_latest_or_new_snapshot()
 
 @app.post("/snapshot/partial")
 async def get_partial_snapshot(req: Request):
-    """Serve delta or latest snapshot to edge devices."""
     return await _stream_latest_or_new_snapshot()
 
 @app.post("/conflicts/resolve")
@@ -136,13 +151,11 @@ def resolve_conflict(req: ResolveConflictRequest):
     if not winner_payload:
         raise HTTPException(status_code=404, detail="Conflict not found")
 
-    # Update in Qdrant Server
     q.set_payload(COLL, payload=winner_payload, points=[winner_payload["memory_id"]])
     return {"status": "resolved", "memory_id": winner_payload["memory_id"], "version": winner_payload["version"]}
 
 @app.get("/stats")
 def stats():
-    """Proof of Privacy endpoint: judges can verify zero private or routine notes exist on server."""
     count = lambda f: q.count(COLL, count_filter=f, exact=True).count
     must = lambda k, v: models.Filter(must=[models.FieldCondition(key=k, match=models.MatchValue(value=v))])
 

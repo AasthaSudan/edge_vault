@@ -32,7 +32,7 @@ def _llm(note: str) -> dict:
 
 # Local semantic heuristics when Ollama is not active on edge device
 ROUTINE_PATTERNS = [
-    re.compile(r"\b(reached site|arrived at|waiting for|starting inspection|break|lunch|heading to|shift ended|status normal)\b", re.I),
+    re.compile(r"\b(reached site|arrived at|waiting for|starting inspection|daily inspection|routine inspection|routine|break|lunch|heading to|shift ended|shift handoff|status normal|everything normal|all gauges normal|no vibrations observed|checked panel|tools stowed)\b", re.I),
     re.compile(r"\b(at \d{1,2}:\d{2}|back in \d+ minutes|on site)\b", re.I)
 ]
 
@@ -59,7 +59,7 @@ def _heuristic_classify(note: str) -> GateDecision:
         if p.search(note):
             return GateDecision("shareable", "fallback", "Reusable industrial equipment diagnosis or repair procedure")
 
-    # Fail closed by default
+    # Fail closed by default: If uncertain, keep it private on-device so sensitive data never leaks
     return GateDecision("private", "fallback", "Classifier unconfident; routed to private by default")
 
 def decide(note: str) -> GateDecision:
@@ -68,7 +68,7 @@ def decide(note: str) -> GateDecision:
     if hits:
         return GateDecision("private", "rule", f"Matched rule: {', '.join(hits)}", hits)
 
-    # 2. Local Ollama LLM (gemma3:1b)
+    # 2. Local Ollama LLM (gemma3:1b if installed and running)
     if _ollama_client:
         for _ in range(2):
             try:

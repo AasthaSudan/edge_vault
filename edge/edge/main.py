@@ -1,42 +1,50 @@
-import asyncio
-from contextlib import asynccontextmanager
+import os
+import contextlib
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from qdrant_edge import ScrollRequest, Filter, FieldCondition, MatchValue
+import asyncio
 
 from edge.config import settings
-from edge import db, events
-from edge.store import embed, shards
-from edge.gate import gate
-from edge.sync import worker
+from edge.store import shards
 from edge.api import memories, search, sync, conflicts, stream
+from edge.sync import worker as sync_worker
+from edge.memory.ttl import sweep_expired_routine
 
-@asynccontextmanager
+@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Initialize SQLite database
-    db.init()
-    # Bind running asyncio loop to event emitter
-    events.bind_loop(asyncio.get_running_loop())
+    # Startup: ensure clean directory setup and start background tasks
+    settings.dir.mkdir(parents=True, exist_ok=True)
+    
+    # 1. Start background sync engine
+    sync_task = asyncio.create_task(sync_worker.run())
+    
+    # 2. Start routine memory TTL pruner (runs every 60 minutes)
+    async def ttl_loop():
+        while True:
+            try:
+                sweep_expired_routine()
+            except Exception as e:
+                print(f"TTL prune warning: {e}")
+            await asyncio.sleep(3600)
+    ttl_task = asyncio.create_task(ttl_loop())
 
-    # Pre-warm embedding model and gate to eliminate cold-start latency
-    try:
-        embed.embed_query("warm up query")
-        gate.decide("warm up note for classifier")
-    except Exception as e:
-        print(f"Warmup warning: {e}")
-
-    # Launch background sync worker
-    sync_task = asyncio.create_task(worker.run())
     yield
 
-    # Clean shutdown
+    # Shutdown: clean up background workers and close shards
     sync_task.cancel()
+    ttl_task.cancel()
+    try:
+        await asyncio.gather(sync_task, ttl_task, return_exceptions=True)
+    except Exception:
+        pass
     shards.private.close()
     shards.shared.close()
 
 app = FastAPI(
-    title="EdgeVault Edge Node",
-    description="Offline-first semantic memory for industrial field technicians",
+    title=f"EdgeVault Node ({settings.device_id})",
+    description="Offline-first semantic memory engine on Qdrant Edge",
     version="0.1.0",
     lifespan=lifespan
 )
@@ -49,6 +57,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Routers already define their own prefixes in their router modules
 app.include_router(memories.router)
 app.include_router(search.router)
 app.include_router(sync.router)
@@ -73,9 +82,15 @@ def local_stats():
     """Counts across local shards."""
     def count_shard(sh):
         with sh.lock:
-            recs, _ = sh.shard.scroll(ScrollRequest(limit=5000, with_payload=True, with_vector=False))
-            active = [r for r in recs if not r.payload.get("deleted", False)]
-            return active
+            try:
+                if not hasattr(sh, "shard") or sh.shard is None:
+                    return []
+                recs, _ = sh.shard.scroll(ScrollRequest(limit=5000, with_payload=True, with_vector=False))
+                active = [r for r in recs if not r.payload.get("deleted", False)]
+                return active
+            except Exception as e:
+                print(f"Stats scroll notice: {e}")
+                return []
 
     priv_recs = count_shard(shards.private)
     shared_recs = count_shard(shards.shared)

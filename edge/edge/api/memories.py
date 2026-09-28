@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Response, status
 from typing import Optional
+import traceback
 from pydantic import BaseModel
 from edge.memory.models import CreateMemoryRequest, UpdateMemoryRequest
 from edge.memory import service
@@ -11,12 +12,16 @@ router = APIRouter(prefix="/memories", tags=["Memories"])
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 def create_memory(req: CreateMemoryRequest):
-    return service.create(
-        text=req.text,
-        title=req.title or "",
-        asset_tag=req.asset_tag or "",
-        category=req.category
-    )
+    try:
+        return service.create(
+            text=req.text,
+            title=req.title or "",
+            asset_tag=req.asset_tag or "",
+            category=req.category
+        )
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("")
 def list_memories(
@@ -25,7 +30,11 @@ def list_memories(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0)
 ):
-    return service.list_memories(category=category, asset_tag=asset_tag, limit=limit, offset=offset)
+    try:
+        return service.list_memories(category=category, asset_tag=asset_tag, limit=limit, offset=offset)
+    except Exception as e:
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/{memory_id}")
 def get_memory(memory_id: str):
@@ -58,4 +67,3 @@ def delete_memory(memory_id: str):
     success = service.delete(memory_id)
     if not success:
         raise HTTPException(status_code=404, detail="Memory not found")
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
