@@ -6,13 +6,64 @@ from qdrant_edge import Point, UpdateOperation, ScrollRequest, Filter, FieldCond
 from edge.config import settings
 from edge.store.embed import embed_doc
 from edge.store.shards import shard_for, private, shared, Shard
-from edge.gate.gate import decide
+from edge.gate import gate as gatemod
+from edge.gate import worker as gate_worker
 from edge.memory.dedup import find_duplicate
+from edge.privacy import egress
 from edge.events import emit
 from edge import db
 
+
 def now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _base_payload(mid: str, text: str, title: str, asset_tag: str, d: gatemod.GateDecision, ts: int) -> dict:
+    return {
+        "memory_id": mid,
+        "text": text,
+        "title": title,
+        "asset_tag": asset_tag,
+        "category": d.category,
+        "gate_source": d.source,
+        "gate_reason": d.reason,
+        "gate_signals": getattr(d, "signals", []),
+        "gate_flags": getattr(d, "flags", []),
+        "gate_context": getattr(d, "context_used", {}),
+        "pii_hits": d.pii_hits,
+        "device_id": settings.device_id,
+        "author": settings.author,
+        "version": 1,
+        "base_version": 0,
+        "created_at": ts,
+        "updated_at": ts,
+        "expires_at": None,
+        "deleted": False,
+        "merged_from": [],
+        "sync_state": "pending" if d.category == "shareable" else "local_only",
+    }
+
+
+def _upsert(sh: Shard, mid: str, vectors: dict, payload: dict):
+    with sh.lock:
+        sh.shard.update(UpdateOperation.upsert_points([Point(id=mid, vector=vectors, payload=payload)]))
+
+
+def _delete(sh: Shard, mid: str):
+    with sh.lock:
+        sh.shard.update(UpdateOperation.delete_points([mid]))
+
+
+def _enqueue_job(mid: str, kind: str):
+    try:
+        db.execute(
+            "INSERT INTO gate_jobs(memory_id, kind, created_at) VALUES (?, ?, ?)",
+            (mid, kind, now_ms())
+        )
+        gate_worker.notify()
+    except Exception as e:
+        print(f"Error enqueueing job {kind} for {mid}: {e}")
+
 
 def create(
     text: str,
@@ -24,94 +75,144 @@ def create(
     ts = now_ms()
     vectors = embed_doc(text)
 
-    # 1. Gate Classification
+    # 1. Manual user override specified at creation
     if category and category in ("shareable", "private", "routine"):
-        cat = category
-        source = "user"
-        reason = "Set manually by technician"
-        pii_hits = []
-    else:
-        decision = decide(text)
-        cat = decision.category
-        source = decision.source
-        reason = decision.reason
-        pii_hits = decision.pii_hits
-
-    target_shard = shard_for(cat)
-
-    # 2. Check for Near-Duplicate on target shard
-    dup = find_duplicate(target_shard, vectors["dense"], asset_tag=asset_tag)
-    if dup:
-        cur = dict(dup.payload)
-        old_version = cur.get("version", 1)
-        cur["text"] = text
-        cur["version"] = old_version + 1
-        cur["base_version"] = old_version
-        cur["updated_at"] = ts
-        if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
-            cur["merged_from"] = []
-        cur["merged_from"].append(mid)
-
-        # Update point in target shard
-        with target_shard.lock:
-            target_shard.shard.update(UpdateOperation.upsert_points([
-                Point(id=dup.id, vector=vectors, payload=cur)
-            ]))
-
-        # Enqueue in outbox if shareable
-        if cat == "shareable":
-            point_data = {"id": str(dup.id), "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}}, "payload": cur}
-            db.execute(
-                "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (str(dup.id), "upsert", json.dumps(point_data), cur["version"], cur["base_version"], ts)
-            )
-
-        emit("dedup.merged", str(dup.id), {"version": cur["version"], "original_id": str(dup.id)})
-        return cur
-
-    # 3. Handle Routine TTL Expiration
-    expires_at = None
-    if cat == "routine":
-        expires_at = ts + (settings.routine_ttl_days * 86400 * 1000)
-
-    # 4. Construct Payload
-    payload = {
-        "memory_id": mid,
-        "text": text,
-        "title": title,
-        "asset_tag": asset_tag,
-        "category": cat,
-        "gate_source": source,
-        "gate_reason": reason,
-        "pii_hits": pii_hits,
-        "device_id": settings.device_id,
-        "author": settings.author,
-        "version": 1,
-        "base_version": 0,
-        "created_at": ts,
-        "updated_at": ts,
-        "expires_at": expires_at,
-        "deleted": False,
-        "merged_from": [],
-        "sync_state": "pending" if cat == "shareable" else "local_only",
-    }
-
-    # 5. Insert point
-    point = Point(id=mid, vector=vectors, payload=payload)
-    with target_shard.lock:
-        target_shard.shard.update(UpdateOperation.upsert_points([point]))
-
-    # 6. Enqueue in Outbox if Shareable
-    if cat == "shareable":
-        point_data = {"id": mid, "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}}, "payload": payload}
-        db.execute(
-            "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, "upsert", json.dumps(point_data), 1, 0, ts)
+        d = gatemod.GateDecision(
+            category=category,
+            source="user",
+            reason="Set manually by technician",
+            pii_hits=[],
+            signals=["equipment_fix"] if category == "shareable" else []
         )
+        target_shard = shard_for(category)
 
-    emit("gate.decided", mid, {"category": cat, "source": source, "reason": reason, "pii_hits": pii_hits})
-    emit("memory.created", mid, {"category": cat})
+        # Check for near duplicate
+        dup = find_duplicate(target_shard, vectors["dense"], asset_tag=asset_tag)
+        if dup:
+            cur = dict(dup.payload)
+            old_version = cur.get("version", 1)
+            cur["text"] = text
+            cur["version"] = old_version + 1
+            cur["base_version"] = old_version
+            cur["updated_at"] = ts
+            if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
+                cur["merged_from"] = []
+            cur["merged_from"].append(mid)
+
+            _upsert(target_shard, str(dup.id), vectors, cur)
+            if category == "shareable":
+                egress.enqueue_shareable(str(dup.id), vectors, cur, cur["version"], cur["base_version"])
+            emit("dedup.merged", str(dup.id), {"version": cur["version"], "original_id": str(dup.id)})
+            return cur
+
+        payload = _base_payload(mid, text, title, asset_tag, d, ts)
+        if category == "routine":
+            payload["expires_at"] = ts + (settings.routine_ttl_days * 86400 * 1000)
+
+        _upsert(target_shard, mid, vectors, payload)
+        if category == "shareable":
+            egress.enqueue_shareable(mid, vectors, payload, 1, 0)
+
+        emit("gate.decided", mid, {"category": category, "source": "user", "reason": d.reason})
+        emit("memory.created", mid, {"category": category})
+        return payload
+
+    # 2. Rule Check (instant, unconditional, private)
+    ruled = gatemod.rule_check(f"{title} {text}")
+    if ruled:
+        payload = _base_payload(mid, text, title, asset_tag, ruled, ts)
+        _upsert(private, mid, vectors, payload)
+        emit("gate.decided", mid, {"category": "private", "source": "rule", "reason": ruled.reason})
+        emit("memory.created", mid, {"category": "private"})
+        if ruled.sanitize_candidate:
+            _enqueue_job(mid, "sanitize")
+        return payload
+
+    # 3. Mode Sync (Evaluation mode or fallback)
+    if settings.gate_mode == "sync":
+        return finalize(mid, text, title, asset_tag, ts, vectors, provisional=False)
+
+    # 4. Mode Async (Fail-closed by construction): write provisional private immediately
+    pending_decision = gatemod.GateDecision(
+        category="private",
+        source="pending",
+        reason="Classifying on device…",
+        signals=[]
+    )
+    payload = _base_payload(mid, text, title, asset_tag, pending_decision, ts)
+    _upsert(private, mid, vectors, payload)
+    emit("memory.created", mid, {"category": "private", "pending": True})
+    _enqueue_job(mid, "classify")
     return payload
+
+
+def finalize(
+    mid: str,
+    text: str,
+    title: str = "",
+    asset_tag: str = "",
+    created_at: int = None,
+    vectors: dict = None,
+    provisional: bool = True
+) -> dict:
+    """Run Gate v2 and finalize memory category. Called by worker thread or sync mode."""
+    created_at = created_at or now_ms()
+    vectors = vectors or embed_doc(text)
+    d = gatemod.decide_v2(f"{title}\n{text}".strip(), vectors["dense"], memory_id=mid)
+    ts = now_ms()
+
+    if d.category == "shareable":
+        dup = find_duplicate(shared, vectors["dense"], asset_tag=asset_tag)
+        if dup:
+            cur = dict(dup.payload)
+            base = cur.get("version", 1)
+            cur.update(
+                text=text,
+                version=base + 1,
+                base_version=base,
+                updated_at=ts,
+                sync_state="pending"
+            )
+            if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
+                cur["merged_from"] = []
+            cur["merged_from"].append(mid)
+
+            _upsert(shared, str(dup.id), vectors, cur)
+            egress.enqueue_shareable(str(dup.id), vectors, cur, cur["version"], base)
+            if provisional:
+                _delete(private, mid)
+            emit("dedup.merged", str(dup.id), {"version": cur["version"]})
+            return cur
+
+    payload = _base_payload(mid, text, title, asset_tag, d, created_at)
+    payload["updated_at"] = ts
+
+    if d.category == "routine":
+        payload["expires_at"] = ts + (settings.routine_ttl_days * 86400 * 1000)
+
+    if d.category == "shareable":
+        payload["sync_state"] = "pending"
+        _upsert(shared, mid, vectors, payload)
+        if provisional:
+            _delete(private, mid)
+        egress.enqueue_shareable(mid, vectors, payload, 1, 0)
+    else:
+        _upsert(private, mid, vectors, payload)
+
+    emit("gate.decided", mid, {
+        "category": d.category,
+        "source": d.source,
+        "reason": d.reason,
+        "signals": d.signals,
+        "flags": d.flags,
+        "context": d.context_used
+    })
+
+    if d.sanitize_candidate:
+        _enqueue_job(mid, "sanitize")
+
+    return payload
+
 
 def get(mid: str) -> Tuple[Optional[Shard], Optional[object]]:
     for sh in (private, shared):
@@ -124,17 +225,23 @@ def get(mid: str) -> Tuple[Optional[Shard], Optional[object]]:
                 continue
     return None, None
 
-def list_memories(category: Optional[str] = None, asset_tag: Optional[str] = None, limit: int = 50, offset: int = 0) -> list[dict]:
+
+def list_memories(
+    category: Optional[str] = None,
+    asset_tag: Optional[str] = None,
+    limit: int = 50,
+    offset: int = 0
+) -> list[dict]:
     results = []
     shards_to_check = [shard_for(category)] if category else [private, shared]
 
-    flt_conditions = [FieldCondition(key="deleted", match=MatchValue(value=False))]
+    flt_conditions = []
     if category:
         flt_conditions.append(FieldCondition(key="category", match=MatchValue(value=category)))
     if asset_tag:
         flt_conditions.append(FieldCondition(key="asset_tag", match=MatchValue(value=asset_tag)))
 
-    flt = Filter(must=flt_conditions)
+    flt = Filter(must=flt_conditions) if flt_conditions else None
 
     for sh in shards_to_check:
         with sh.lock:
@@ -151,6 +258,7 @@ def list_memories(category: Optional[str] = None, asset_tag: Optional[str] = Non
     results.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
     return results[offset:offset + limit]
 
+
 def update(mid: str, text: Optional[str] = None, title: Optional[str] = None, asset_tag: Optional[str] = None) -> Optional[dict]:
     sh, rec = get(mid)
     if not rec or not sh:
@@ -166,24 +274,20 @@ def update(mid: str, text: Optional[str] = None, title: Optional[str] = None, as
     if asset_tag is not None:
         cur["asset_tag"] = asset_tag
 
-    new_text = text if text is not None else cur["text"]
+    new_text = cur.get("text", "")
+    if text is not None:
+        new_text = text
     cur["text"] = new_text
 
     vectors = embed_doc(new_text)
-    point = Point(id=mid, vector=vectors, payload=cur)
-
-    with sh.lock:
-        sh.shard.update(UpdateOperation.upsert_points([point]))
+    _upsert(sh, mid, vectors, cur)
 
     if cur.get("category") == "shareable":
-        point_data = {"id": mid, "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}}, "payload": cur}
-        db.execute(
-            "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, "upsert", json.dumps(point_data), cur["version"], cur["base_version"], cur["updated_at"])
-        )
+        egress.enqueue_shareable(mid, vectors, cur, cur["version"], cur["base_version"])
 
     emit("memory.updated", mid, {"category": cur.get("category")})
     return cur
+
 
 def delete(mid: str) -> bool:
     sh, rec = get(mid)
@@ -196,26 +300,18 @@ def delete(mid: str) -> bool:
         cur["deleted"] = True
         cur["updated_at"] = ts
         cur["version"] = cur.get("version", 1) + 1
-        vectors = embed_doc(cur["text"])
-        point = Point(id=mid, vector=vectors, payload=cur)
-        with sh.lock:
-            sh.shard.update(UpdateOperation.upsert_points([point]))
-
-        # Enqueue delete tombstone in outbox
-        point_data = {"id": mid, "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}}, "payload": cur}
-        db.execute(
-            "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, "delete", json.dumps(point_data), cur["version"], cur["base_version"], ts)
-        )
+        vectors = embed_doc(cur.get("text", ""))
+        _upsert(sh, mid, vectors, cur)
+        egress.enqueue_shareable(mid, vectors, cur, cur["version"], cur["base_version"], op="delete")
     else:
-        with sh.lock:
-            sh.shard.update(UpdateOperation.delete_points([mid]))
+        _delete(sh, mid)
 
     emit("memory.deleted", mid, {"category": cur.get("category")})
     return True
 
+
 def change_category(mid: str, new_category: str) -> Optional[dict]:
-    """User override to move memory between shards and update fleet synchronization."""
+    """User override to move memory between shards, update outbox, and store correction feedback."""
     if new_category not in ("shareable", "private", "routine"):
         return None
 
@@ -225,6 +321,7 @@ def change_category(mid: str, new_category: str) -> Optional[dict]:
 
     cur = dict(rec.payload)
     old_cat = cur.get("category")
+    old_source = cur.get("gate_source")
     if old_cat == new_category:
         return cur
 
@@ -238,37 +335,38 @@ def change_category(mid: str, new_category: str) -> Optional[dict]:
 
     new_sh = shard_for(new_category)
     vectors = embed_doc(cur["text"])
-    point = Point(id=mid, vector=vectors, payload=cur)
 
     # Remove from old shard
-    with old_sh.lock:
-        old_sh.shard.update(UpdateOperation.delete_points([mid]))
-
+    _delete(old_sh, mid)
     # Insert into new shard
-    with new_sh.lock:
-        new_sh.shard.update(UpdateOperation.upsert_points([point]))
+    _upsert(new_sh, mid, vectors, cur)
 
-    # Outbox orchestration
+    # Outbox orchestration via egress
     if new_category == "shareable":
-        point_data = {"id": mid, "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}}, "payload": cur}
-        db.execute(
-            "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, "upsert", json.dumps(point_data), cur["version"], cur["base_version"], ts)
-        )
+        egress.enqueue_shareable(mid, vectors, cur, cur["version"], cur["base_version"])
     elif old_cat == "shareable":
-        # Retraction from fleet: enqueue delete tombstone with category shareable so server marks it deleted
         retract_payload = dict(cur)
         retract_payload["category"] = "shareable"
         retract_payload["deleted"] = True
-        point_data = {
-            "id": mid,
-            "vector": {"dense": vectors["dense"], "bm25": {"indices": list(vectors["bm25"].indices), "values": list(vectors["bm25"].values)}},
-            "payload": retract_payload
-        }
+        egress.enqueue_shareable(mid, vectors, retract_payload, cur["version"], cur["base_version"], op="delete")
+
+    # Store technician correction in gate_feedback table (the on-device learning signal)
+    try:
         db.execute(
-            "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (mid, "delete", json.dumps(point_data), cur["version"], cur["base_version"], ts)
+            "INSERT INTO gate_feedback(memory_id, text, dense_json, model_category, user_category, ts) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                mid,
+                cur["text"],
+                json.dumps(vectors["dense"]),
+                old_cat if old_source in ("llm", "fallback") else None,
+                new_category,
+                ts
+            ),
         )
+        db.execute("UPDATE gate_jobs SET status='cancelled' WHERE memory_id=? AND status='pending'", (mid,))
+    except Exception as e:
+        print(f"Correction logging notice: {e}")
 
     emit("gate.overridden", mid, {"old_category": old_cat, "new_category": new_category})
     return cur

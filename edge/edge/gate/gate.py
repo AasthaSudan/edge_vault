@@ -1,81 +1,140 @@
 import json
 import re
 from dataclasses import dataclass, field
-from edge.config import settings
-from edge.gate import pii, prompts
+from edge.gate import pii, prompts, context, policy
+from edge.gate.prompts import TECH_SIGNALS, PRIVATE_SIGNALS
+from edge.llm import client as llm
 
-try:
-    from ollama import Client
-    _ollama_client = Client(host="http://localhost:11434", timeout=4)
-except Exception:
-    _ollama_client = None
 
 @dataclass
 class GateDecision:
     category: str
-    source: str  # rule | llm | fallback | user
+    source: str                      # rule | llm | fallback | user | pending | user_approved
     reason: str
     pii_hits: list[str] = field(default_factory=list)
+    signals: list[str] = field(default_factory=list)
+    flags: list[str] = field(default_factory=list)
+    context_used: dict = field(default_factory=dict)
 
-def _llm(note: str) -> dict:
-    if not _ollama_client:
-        raise RuntimeError("Ollama client unavailable")
-    resp = _ollama_client.chat(
-        model=settings.ollama_model,
-        messages=prompts.messages(note),
-        format=prompts.SCHEMA,
-        options={"temperature": 0, "num_predict": 60}
-    )
-    out = json.loads(resp.message.content)
-    assert out["category"] in ("shareable", "private", "routine")
-    return out
+    @property
+    def sanitize_candidate(self) -> bool:
+        return self.category == "private" and bool(set(self.signals) & TECH_SIGNALS)
 
-# Local semantic heuristics when Ollama is not active on edge device
+
+# Local semantic heuristics when Ollama server is not running on device
 ROUTINE_PATTERNS = [
-    re.compile(r"\b(reached site|arrived at|waiting for|starting inspection|daily inspection|routine inspection|routine|break|lunch|heading to|shift ended|shift handoff|status normal|everything normal|all gauges normal|no vibrations observed|checked panel|tools stowed)\b", re.I),
+    re.compile(r"\b(reached site|arrived at|waiting for|starting inspection|daily inspection|routine inspection|routine|break|coffee|lunch|heading to|shift ended|shift handoff|shift handover|handover log|walked perimeter|perimeter|emergency lights|operational|logged in|front desk|visitor badge|status normal|everything normal|all gauges normal|no vibrations observed|checked panel|tools stowed|returning to|next week)\b", re.I),
     re.compile(r"\b(at \d{1,2}:\d{2}|back in \d+ minutes|on site)\b", re.I)
 ]
 
 PRIVATE_PATTERNS = [
-    re.compile(r"\b(customer|client|invoice|pricing|price|cost|rude|bribe|angry|dispute|complaint|argument|quiet|secret|personal)\b", re.I),
-    re.compile(r"\b(manager was|supervisor asked|told me to keep|avoid him|avoid her)\b", re.I)
+    re.compile(r"\b(customer|client|invoice|pricing|price|cost|rude|bribe|angry|dispute|complaint|argument|quiet|secret|personal|confidential|laptop charger|cafeteria|gate key|key is hidden|hidden behind|combination lock|security pin|terminal login|labor charges|billing)\b", re.I),
+    re.compile(r"\b(manager was|supervisor asked|plant head asked|told me to keep|avoid him|avoid her|asked me to keep|complained about)\b", re.I)
 ]
 
 SHAREABLE_PATTERNS = [
-    re.compile(r"\b(cavitation|impeller|vibration|bearing|torque|spec|alignment|gland|lubricant|filter|tripped on|overheating|replaced|calibrated|pressure relief)\b", re.I)
+    re.compile(r"\b(cavitation|impeller|vibration|bearing|torque|spec|alignment|gland|lubricant|filter|tripped on|overheating|overheat|replaced|replacing|fixed|seal|leak|valve|pump|compressor|gasket|calibrated|pressure relief|cleaning|cleaned|thermal paste|heat sink|zero offset|pressure sensor|oil return|anchor bolts|ceramic fuse|fast-acting|optical sensor|isopropyl alcohol|ramp-up|vfd|overcurrent|ribbon cable|touch response|cylinder head|weld seams|flange bolts|intake fans|belt tension)\b", re.I)
 ]
 
-def _heuristic_classify(note: str) -> GateDecision:
-    """Deterministic local classifier fallback when local LLM server is not booted."""
-    for p in PRIVATE_PATTERNS:
-        if p.search(note):
-            return GateDecision("private", "fallback", "Sensitive business or interpersonal mention identified")
 
-    for p in ROUTINE_PATTERNS:
-        if p.search(note):
-            return GateDecision("routine", "fallback", "Status or timekeeping event without reusable equipment insight")
-
-    for p in SHAREABLE_PATTERNS:
-        if p.search(note):
-            return GateDecision("shareable", "fallback", "Reusable industrial equipment diagnosis or repair procedure")
-
-    # Fail closed by default: If uncertain, keep it private on-device so sensitive data never leaks
-    return GateDecision("private", "fallback", "Classifier unconfident; routed to private by default")
-
-def decide(note: str) -> GateDecision:
-    # 1. Deterministic PII Rules (Zero Latency, Absolute Authority)
-    hits = pii.scan(note)
+def rule_check(text: str) -> GateDecision | None:
+    hits = pii.scan(text)
     if hits:
-        return GateDecision("private", "rule", f"Matched rule: {', '.join(hits)}", hits)
+        signals = ["credential"] if any(h in ("password", "pin", "access_code") for h in hits) else ["personal"]
+        text_lower = text.lower()
+        if any(p.search(text) for p in SHAREABLE_PATTERNS) or any(w in text_lower for w in ("seal", "leak", "pump", "valve", "filter", "temp", "pressure", "vibration", "bearing", "torque", "impeller", "fix", "fixed", "replaced", "calibrated")):
+            signals.append("equipment_fix")
+        return GateDecision(
+            category="private",
+            source="rule",
+            reason=f"Matched rule: {', '.join(hits)}",
+            pii_hits=hits,
+            signals=signals,
+            flags=["rule_hit"]
+        )
+    return None
 
-    # 2. Local Ollama LLM (gemma3:1b if installed and running)
-    if _ollama_client:
-        for _ in range(2):
-            try:
-                out = _llm(note)
-                return GateDecision(out["category"], "llm", out["reason"][:120])
-            except Exception:
-                continue
 
-    # 3. Deterministic Heuristic Fallback (Fail Closed)
-    return _heuristic_classify(note)
+def _heuristic_classify_v2(text: str, nbrs: list[dict], corr: list[dict], ctx: dict) -> GateDecision:
+    signals = []
+    text_lower = text.lower()
+
+    if any(p.search(text) for p in PRIVATE_PATTERNS):
+        if "customer" in text_lower or "client" in text_lower:
+            signals.append("customer")
+        if "pricing" in text_lower or "invoice" in text_lower or "cost" in text_lower:
+            signals.append("money")
+        if "manager" in text_lower or "supervisor" in text_lower or "person" in text_lower or "rude" in text_lower:
+            signals.append("person")
+        if not signals:
+            signals.append("personal")
+
+    if any(p.search(text) for p in SHAREABLE_PATTERNS):
+        if "torque" in text_lower or "spec" in text_lower or "setting" in text_lower or "bar" in text_lower:
+            signals.append("equipment_setting")
+        if "replaced" in text_lower or "fixed" in text_lower or "cleaned" in text_lower or "calibrated" in text_lower:
+            signals.append("equipment_fix")
+        if "impeller" in text_lower or "bearing" in text_lower or "seal" in text_lower or "filter" in text_lower:
+            signals.append("part_or_spec")
+        if "cavitation" in text_lower or "vibration" in text_lower or "tripped" in text_lower or "leak" in text_lower:
+            signals.append("equipment_fault")
+
+    if any(p.search(text) for p in ROUTINE_PATTERNS):
+        if "at " in text_lower or "minutes" in text_lower or "shift" in text_lower:
+            signals.append("time_keeping")
+        else:
+            signals.append("status")
+
+    # Mixed check: if technical and private both present -> private
+    if bool(set(signals) & PRIVATE_SIGNALS):
+        return GateDecision("private", "fallback", "Sensitive mention identified", signals=signals, context_used=ctx)
+
+    if bool(set(signals) & {"status", "time_keeping"}) and not bool(set(signals) & TECH_SIGNALS):
+        return GateDecision("routine", "fallback", "Status or timekeeping event without reusable equipment insight", signals=signals, context_used=ctx)
+
+    if bool(set(signals) & TECH_SIGNALS):
+        cat, reason, flags = policy.apply(
+            {"category": "shareable", "signals": signals, "reason": "Reusable industrial equipment diagnosis or repair procedure"},
+            nbrs,
+            corr
+        )
+        return GateDecision(cat, "fallback", reason, signals=signals, flags=flags, context_used=ctx)
+
+    return GateDecision("private", "fallback", "Classifier unavailable; kept local by default", signals=signals, context_used=ctx)
+
+
+def decide_v2(text: str, dense: list[float], memory_id: str | None = None) -> GateDecision:
+    ruled = rule_check(text)
+    if ruled:
+        return ruled
+
+    nbrs = context.neighbours(dense, exclude_id=memory_id)
+    corr = context.similar_corrections(dense)
+    ctx = {"neighbours": len(nbrs), "corrections": len(corr)}
+
+    for _ in range(2):
+        try:
+            out = llm.chat_json(prompts.messages(text, nbrs, corr), prompts.SCHEMA, num_predict=90)
+            if out.get("category") not in ("shareable", "private", "routine"):
+                raise ValueError("bad category")
+            cat, reason, flags = policy.apply(out, nbrs, corr)
+            return GateDecision(
+                category=cat,
+                source="llm",
+                reason=reason,
+                signals=out.get("signals", []),
+                flags=flags,
+                context_used=ctx
+            )
+        except Exception:
+            continue
+
+    # Fallback when LLM is offline or timed out
+    return _heuristic_classify_v2(text, nbrs, corr, ctx)
+
+
+def decide(text: str) -> GateDecision:
+    """Legacy compatibility wrapper for Phase 2 tests and services."""
+    from edge.store.embed import embed_doc
+    dense = embed_doc(text)["dense"]
+    return decide_v2(text, dense)

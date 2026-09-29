@@ -1,0 +1,13 @@
+[importlinter]
+root_package = edge
+
+[importlinter:contract:sync-cannot-see-private-intelligence]
+name = Sync layer cannot import assistant, chat, gate context or the LLM
+type = forbidden
+source_modules =
+    edge.sync
+forbidden_modules =
+    edge.assistant
+    edge.gate.context
+    edge.gate.sanitize
+    edge.llm

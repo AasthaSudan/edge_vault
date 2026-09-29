@@ -373,6 +373,7 @@ Detailed architectural specifications, verification benchmarks, and design bluep
 - [Phase 2: AI Memory Gate & Evolving Memory](docs/PHASE_2_MEMORY_GATE.md) — Regex PII filter, local LLM classifier, dedup, and TTL.
 - [Phase 3: Edge-Cloud Sync & Conflicts](docs/PHASE_3_EDGE_CLOUD_SYNC.md) — SQLite WAL outbox, push-before-pull sync, distributed conflict resolution.
 - [Phase 4: Dashboard, Observability & Demo](docs/PHASE_4_DASHBOARD_DEMO.md) — Next.js 14 console, live SSE stream, privacy audit proof.
+- [Phase 5: Local Intelligence Layer (On-Device LLM)](docs/PHASE_5_LOCAL_INTELLIGENCE.md) — Context-aware Gate v2, Offline Assistant with citations, Split & Share inbox, Egress guard, Taint rules.
 
 ---
 
@@ -385,11 +386,13 @@ edge_vault/
 ├── requirements.txt              # Unified Python dependencies
 ├── .env.example                  # Root environment template
 ├── .env                          # Active root environment configuration
+├── .importlinter                 # Architectural privacy contracts (NFR-13)
 ├── docs/                         # Phase specifications & architecture documentation
 │   ├── PHASE_1_EDGE_CORE.md
 │   ├── PHASE_2_MEMORY_GATE.md
 │   ├── PHASE_3_EDGE_CLOUD_SYNC.md
-│   └── PHASE_4_DASHBOARD_DEMO.md
+│   ├── PHASE_4_DASHBOARD_DEMO.md
+│   └── PHASE_5_LOCAL_INTELLIGENCE.md
 │
 ├── edge/                         # Edge Node Service (FastAPI :7001)
 │   ├── .env.example              # Edge-specific env template
@@ -398,13 +401,16 @@ edge_vault/
 │   │   ├── main.py               # Application entrypoint & lifespan
 │   │   ├── config.py             # Settings and environment defaults
 │   │   ├── events.py             # Event broker & SSE broadcaster
-│   │   ├── api/                  # Endpoints: memories, search, sync, conflicts, stream
-│   │   ├── gate/                 # AI Memory Gate (PII regex, Ollama LLM, fallback)
-│   │   ├── memory/               # Storage services, dedup engine, TTL pruner
+│   │   ├── api/                  # Endpoints: memories, search, sync, assistant, suggestions, llm
+│   │   ├── assistant/            # Offline RAG engine, hybrid retrieval, local chat storage
+│   │   ├── gate/                 # Gate v2: PII regex, context retrieval, veto policy, async worker, sanitizer
+│   │   ├── llm/                  # Loopback-guarded Ollama client, single-slot CPU lock, latency telemetry
+│   │   ├── memory/               # Storage services, dedup engine, TTL pruner, taint propagation
+│   │   ├── privacy/              # Egress guard (sole caller of outbox.enqueue, blocks non-shareable/PII)
 │   │   ├── store/                # Dual Qdrant Edge shards & hybrid search (RRF)
 │   │   └── sync/                 # SQLite outbox, network monitor, push/pull worker
-│   ├── scripts/                  # Provisioning, seeding, and demo runner scripts
-│   └── tests/                    # Benchmark and validation test suites
+│   ├── scripts/                  # Provisioning, seeding, model benchmarking, and demo runner scripts
+│   └── tests/                    # Privacy boundaries, taint, gate eval v2, and assistant eval suites
 │
 ├── cloud/                        # Cloud Sync API (:8080)
 │   ├── .env.example              # Cloud-specific env template
@@ -417,9 +423,9 @@ edge_vault/
 └── dashboard/                    # Next.js 14 Observability Dashboard (:3000)
     ├── .env.example              # Dashboard env template
     ├── .env.local                # Dashboard local active configuration
-    ├── app/                      # App Router pages (Overview, Search, Sync, Conflicts)
-    ├── components/               # UI components, top-bar offline toggle, live stream
-    └── lib/                      # Client API & SSE subscription helpers
+    ├── app/                      # App Router pages (Overview, Search, Sync, Conflicts, Assistant, Suggestions)
+    ├── components/               # CitationChip, LlmStatus, GateBadge, Navbar
+    └── lib/                      # Client API, NDJSON stream reader, SSE subscription helpers
 ```
 
 ---

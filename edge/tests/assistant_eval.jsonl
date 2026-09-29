@@ -1,0 +1,20 @@
+{"q": "What is the Noida gate code and how do I fix a P-200 seal leak?", "expect_keywords": ["4431", "Viton"], "answerable": true, "numeric": true}
+{"q": "How did we fix the turbine 4 bearing overheat?", "expect_keywords": ["oil return", "45 PSI"], "answerable": true, "numeric": true}
+{"q": "What is the torque spec for panel B bus bars?", "expect_keywords": ["25 Nm"], "answerable": true, "numeric": true}
+{"q": "How was the vibration on compressor C-14 eliminated?", "expect_keywords": ["85 Nm", "anchor bolts"], "answerable": true, "numeric": true}
+{"q": "What was replaced on control transformer XF-1?", "expect_keywords": ["15A", "fuse"], "answerable": true, "numeric": true}
+{"q": "How to clean the optical sensor lens on conveyor sorter CS-02?", "expect_keywords": ["isopropyl alcohol"], "answerable": true}
+{"q": "What ramp-up time was set for motor M-3 on the VFD?", "expect_keywords": ["8s"], "answerable": true, "numeric": true}
+{"q": "How to fix intermittent touch response on HMI display panel?", "expect_keywords": ["ribbon cable"], "answerable": true}
+{"q": "What was done to reduce the inverter heat sink temperature?", "expect_keywords": ["thermal paste", "14C"], "answerable": true, "numeric": true}
+{"q": "What was calibrated on pressure sensor PT-102?", "expect_keywords": ["0.04 bar"], "answerable": true, "numeric": true}
+{"q": "What bearing model was used for motor M-12?", "expect_keywords": ["6205-2RS"], "answerable": true}
+{"q": "What diaphragm material was replaced on chemical pump CP-4?", "expect_keywords": ["PTFE"], "answerable": true}
+{"q": "What temperature limit was set on the furnace controller?", "expect_keywords": ["850C"], "answerable": true, "numeric": true}
+{"q": "What secondary coil voltage was transformer T-1 rewired to?", "expect_keywords": ["240V"], "answerable": true, "numeric": true}
+{"q": "What deflection tension was set on exhaust fan EF-9?", "expect_keywords": ["45 lbs"], "answerable": true, "numeric": true}
+{"q": "What is the warranty period of pump P-900?", "answerable": false}
+{"q": "What is the employee ID of the shift technician?", "answerable": false}
+{"q": "How to replace the rotor on diesel generator DG-88?", "answerable": false}
+{"q": "What brand of coffee machine is in the breakdown lounge?", "answerable": false}
+{"q": "Where is the safety datasheet for liquid nitrogen tank LN-3?", "answerable": false}

@@ -44,37 +44,42 @@ export default function ActivityPage() {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-xl font-bold tracking-tight text-foreground">
-            Real-Time Activity Stream
-          </h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Live Server-Sent Events (SSE) from the local edge node (:7001/events).
+          <div className="flex items-center gap-2">
+            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
+              Real-Time Activity Stream
+            </h1>
+            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">
+              SSE Telemetry
+            </span>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            Live Server-Sent Events emitted by the local edge node (:7001/events).
           </p>
         </div>
 
         <div className="flex items-center gap-2 self-start sm:self-auto">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono font-medium">
-            <Radio className="w-3.5 h-3.5 animate-pulse" />
-            <span>SSE CONNECTED</span>
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/30 border border-emerald-800/40 text-emerald-400 text-xs font-mono font-medium">
+            <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
+            <span>Connected</span>
           </div>
         </div>
       </div>
 
       {/* Filter Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-3 p-3 rounded-lg border border-border bg-card">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="panel p-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-1">
           {["all", "memory", "gate", "sync", "conflict", "dedup"].map((f) => (
             <button
               key={f}
               onClick={() => setFilterType(f)}
-              className={`px-2.5 py-1 rounded text-xs font-mono font-medium transition-all ${
+              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
                 filterType === f
-                  ? "bg-primary text-primary-foreground font-semibold"
-                  : "bg-muted/50 hover:bg-muted text-muted-foreground hover:text-foreground"
+                  ? "bg-slate-800 text-white font-medium"
+                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
               }`}
             >
               {f.toUpperCase()}
@@ -82,7 +87,7 @@ export default function ActivityPage() {
           ))}
         </div>
 
-        <span className="text-xs font-mono text-muted-foreground">
+        <span className="text-xs font-mono text-slate-500">
           Showing {filteredEvents.length} events
         </span>
       </div>
@@ -90,12 +95,12 @@ export default function ActivityPage() {
       {/* Stream Feed */}
       <div className="space-y-2.5">
         {filteredEvents.length === 0 ? (
-          <div className="p-12 text-center rounded-xl border border-border bg-card space-y-2">
-            <Activity className="w-8 h-8 text-muted-foreground mx-auto" />
-            <h3 className="text-sm font-semibold text-foreground">
+          <div className="panel p-12 text-center space-y-2">
+            <Activity className="w-8 h-8 text-slate-600 mx-auto" />
+            <h3 className="text-sm font-semibold text-white">
               Awaiting Edge Events...
             </h3>
-            <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
               Perform an action (create a note, trigger search, toggle offline mode, or sync) to watch events stream in real time.
             </p>
           </div>
@@ -103,32 +108,32 @@ export default function ActivityPage() {
           filteredEvents.map((ev, i) => (
             <div
               key={`${ev.ts}-${i}`}
-              className="p-3.5 rounded-lg border border-border bg-card hover:border-border/80 transition-all font-mono text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3 animate-in fade-in duration-150"
+              className="panel p-3.5 font-mono text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3"
             >
-              <div className="space-y-1">
+              <div className="space-y-1.5">
                 <div className="flex items-center gap-2">
                   <span
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${getEventBadge(
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase border ${getEventBadge(
                       ev.type
                     )}`}
                   >
                     {ev.type}
                   </span>
                   {ev.memory_id && (
-                    <span className="text-muted-foreground text-[10px] truncate max-w-xs">
+                    <span className="text-slate-500 text-[10px] truncate max-w-xs">
                       mid: {ev.memory_id}
                     </span>
                   )}
                 </div>
 
                 {ev.data && Object.keys(ev.data).length > 0 && (
-                  <pre className="text-[11px] text-muted-foreground bg-background/50 p-2 rounded border border-border overflow-x-auto">
+                  <pre className="text-[11px] text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800/80 overflow-x-auto leading-relaxed">
                     {JSON.stringify(ev.data, null, 2)}
                   </pre>
                 )}
               </div>
 
-              <span className="text-[10px] text-muted-foreground/60 shrink-0 self-start">
+              <span className="text-[10px] text-slate-500 shrink-0 self-start">
                 {new Date(ev.ts).toLocaleTimeString()}
               </span>
             </div>

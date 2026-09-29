@@ -26,7 +26,7 @@ def _rrf(lists, k: int = 60):
 
 def search(q: str, mode: str = "hybrid", limit: int = 10, **filters):
     t0 = time.perf_counter()
-    vec = embed_query(q)
+    vec = embed_query(q, mode=mode)
     t_embed = time.perf_counter()
 
     names = {"hybrid": ["dense", "bm25"], "dense": ["dense"], "bm25": ["bm25"]}.get(mode, ["dense", "bm25"])

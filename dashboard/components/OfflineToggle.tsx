@@ -26,41 +26,37 @@ export function OfflineToggle() {
   const outboxDepth = data?.outbox_depth ?? 0;
 
   return (
-    <div className="flex items-center gap-3 px-3 py-1.5 rounded-full border border-border bg-card/80 backdrop-blur text-xs font-medium">
+    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-800 bg-slate-900 text-xs font-mono">
       <button
         onClick={() => mutation.mutate(!isOffline)}
-        className={`flex items-center gap-2 px-2.5 py-1 rounded-full transition-all ${
+        className={`flex items-center gap-1.5 transition-colors cursor-pointer ${
           isOffline
-            ? "bg-amber-500/20 text-amber-400 border border-amber-500/30"
-            : "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+            ? "text-amber-400 hover:text-amber-300"
+            : "text-emerald-400 hover:text-emerald-300"
         }`}
-        title="Toggle simulated connectivity for offline demo"
+        title="Toggle simulated network disconnection"
       >
         {isOffline ? (
           <>
-            <WifiOff className="w-3.5 h-3.5 text-amber-400 animate-pulse" />
-            <span>Simulated Offline</span>
+            <WifiOff className="w-3.5 h-3.5" />
+            <span>Offline</span>
           </>
         ) : (
           <>
-            <Wifi className="w-3.5 h-3.5 text-emerald-400" />
+            <Wifi className="w-3.5 h-3.5" />
             <span>Online</span>
           </>
         )}
       </button>
 
-      <div className="flex items-center gap-1.5 text-muted-foreground border-l border-border pl-3">
+      <span className="text-slate-600">|</span>
+
+      <span className="text-slate-400 flex items-center gap-1">
         <span>Outbox:</span>
-        <span
-          className={`px-1.5 py-0.5 rounded font-mono font-semibold ${
-            outboxDepth > 0
-              ? "bg-amber-500/20 text-amber-300"
-              : "bg-muted text-muted-foreground"
-          }`}
-        >
+        <strong className={outboxDepth > 0 ? "text-amber-400" : "text-slate-300"}>
           {outboxDepth}
-        </span>
-      </div>
+        </strong>
+      </span>
     </div>
   );
 }

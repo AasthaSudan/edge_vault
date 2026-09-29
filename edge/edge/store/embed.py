@@ -28,8 +28,12 @@ def embed_doc(text: str) -> dict:
     dense = next(iter(dense_emb.embed([text]))).tolist()
     return {"dense": dense, "bm25": bm25_emb.embed_document(text)}
 
-def embed_query(text: str) -> dict:
-    dense_emb = get_dense_embedder()
-    bm25_emb = get_bm25_embedder()
-    dense = next(iter(dense_emb.embed([text]))).tolist()
-    return {"dense": dense, "bm25": bm25_emb.embed_query(text)}
+def embed_query(text: str, mode: str = "hybrid") -> dict:
+    res = {}
+    if mode in ("hybrid", "dense"):
+        dense_emb = get_dense_embedder()
+        res["dense"] = next(iter(dense_emb.embed([text]))).tolist()
+    if mode in ("hybrid", "bm25"):
+        bm25_emb = get_bm25_embedder()
+        res["bm25"] = bm25_emb.embed_query(text)
+    return res

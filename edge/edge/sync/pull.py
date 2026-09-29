@@ -48,13 +48,13 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
                     bm25_indices = sparse_dict.get("indices", [])
                     bm25_values = sparse_dict.get("values", [])
 
-                    pv = PointVectors()
+                    vec_dict = {}
                     if dense_vec:
-                        pv.set_vector("dense", dense_vec)
+                        vec_dict["dense"] = dense_vec
                     if bm25_indices and bm25_values:
-                        pv.set_sparse_vector("bm25", SparseVector(indices=bm25_indices, values=bm25_values))
+                        vec_dict["bm25"] = SparseVector(indices=bm25_indices, values=bm25_values)
 
-                    point = Point(id=item["id"], vectors=pv, payload=pl)
+                    point = Point(id=item["id"], vector=vec_dict, payload=pl)
                     shared.shard.update(UpdateOperation.upsert_points([point]))
 
         now_ts = int(time.time() * 1000)

@@ -69,8 +69,9 @@ async def test_full_sync_lifecycle():
 
     print("\n--- Step 3: Device A Pushes Outbox to Cloud ---")
     async with httpx.AsyncClient(timeout=15) as client:
-        pushed = await push.push_once(client)
-        print(f"Successfully pushed {pushed} items from outbox.")
+        while outbox.depth() > 0:
+            pushed = await push.push_once(client)
+            print(f"Successfully pushed {pushed} items from outbox.")
 
     remaining_depth = outbox.depth()
     print(f"Remaining outbox depth after push: {remaining_depth}")

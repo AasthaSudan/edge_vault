@@ -1,0 +1,40 @@
+{"text": "P-200 cavitation noise fixed by replacing the worn impeller.", "label": "shareable"}
+{"text": "Torque spec for panel B bus bars is 25 Nm, not 20.", "label": "shareable"}
+{"text": "Replaced thermal paste on inverter heat sink; temperature dropped by 14C.", "label": "shareable"}
+{"text": "Calibrated pressure sensor PT-102 zero offset to 0.04 bar.", "label": "shareable"}
+{"text": "Turbine 4 bearing overheat caused by blocked oil return line; flushed and restored 45 PSI flow.", "label": "shareable"}
+{"text": "Vibration on compressor C-14 eliminated after tightening foundation anchor bolts to 85 Nm.", "label": "shareable"}
+{"text": "Replaced blown 15A ceramic fuse on control transformer XF-1 with fast-acting type.", "label": "shareable"}
+{"text": "Cleaned optical sensor lens on conveyor sorter CS-02 with isopropyl alcohol.", "label": "shareable"}
+{"text": "Corrected VFD ramp-up time from 2s to 8s to prevent overcurrent trip on motor M-3.", "label": "shareable"}
+{"text": "Re-seated loose ribbon cable on HMI display panel to fix intermittent touch response.", "label": "shareable"}
+{"text": "Site manager Rahul was rude about the delay, avoid him next visit.", "label": "private"}
+{"text": "Customer unhappy with last invoice of $4,500, do not discuss pricing with Sharma.", "label": "private"}
+{"text": "Server rack access combination lock is set to 8821.", "label": "private"}
+{"text": "Spoke with client director Mrs. Mehta; she requested confidential audit before next quarter.", "label": "private"}
+{"text": "Technician personal note: left laptop charger in cafeteria 2nd floor.", "label": "private"}
+{"text": "Substation gate key is hidden behind the water meter box.", "label": "private"}
+{"text": "Security pin for terminal login is admin4491.", "label": "private"}
+{"text": "Billing dispute ongoing regarding maintenance labor charges for September.", "label": "private"}
+{"text": "Reached site at 10:15, starting routine inspection.", "label": "routine"}
+{"text": "Checked panel B, everything normal.", "label": "routine"}
+{"text": "Completed daily shift handover log.", "label": "routine"}
+{"text": "Walked perimeter and verified emergency lights are operational.", "label": "routine"}
+{"text": "Logged in at front desk and collected visitor badge.", "label": "routine"}
+{"text": "Standing by waiting for plant supervisor to open electrical room.", "label": "routine"}
+{"text": "Finished coffee break, returning to unit 3.", "label": "routine"}
+{"text": "Gate code for Noida plant is 4431. P-200 seal leak fixed by replacing the lip seal with a Viton seal.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Supervisor John (9876543210) called regarding motor M-12 bearing replacement using 6205-2RS.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Paid vendor $320 cash to source replacement O-ring pack for valve V-10.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Customer passcode is 9021; adjusted cooling water flow valve to 15 GPM to prevent boiler trip.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Plant head asked to keep leak confidential: replaced ruptured PTFE diaphragm on chemical pump CP-4.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Master PIN 1234 used to reset furnace temperature controller high-limit to 850C.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Manager Amit approved overtime for rewiring transformer T-1 secondary coil to 240V.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Client complained about $1,200 repair cost; fixed oil leak on hydraulic ram H-2 by tightening flange bolts.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Guard Ramesh helped access roof: cleared debris blocking chiller intake fans.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Operator password is pass2024; increased belt tension on exhaust fan EF-9 to 45 lbs deflection.", "label": "private", "mixed": true, "expect_suggestion": true}
+{"text": "Observed unusual hydraulic line flutter on press PR-5.", "label": "private", "correction_dependent": true}
+{"text": "Check coolant pH level on machining center MC-1 next week.", "label": "routine", "correction_dependent": true}
+{"text": "Inspect weld seams on tank TK-10 for micro-fractures during scheduled shutdown.", "label": "shareable", "correction_dependent": true}
+{"text": "Found minor surface corrosion on piping near cooling tower CT-2.", "label": "private", "correction_dependent": true}
+{"text": "Re-torqued cylinder head bolts on generator G-1 to 110 Nm.", "label": "shareable", "correction_dependent": true}

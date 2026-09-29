@@ -8,23 +8,31 @@ import asyncio
 
 from edge.config import settings
 from edge.store import shards
-from edge.api import memories, search, sync, conflicts, stream
+from edge.api import memories, search, sync, conflicts, stream, assistant, suggestions, llm
 from edge.sync import worker as sync_worker
 from edge.memory.ttl import sweep_expired_routine
+from edge.assistant import sessions
+from edge.llm import client as llm_client
+from edge.gate import worker as gate_worker
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup: ensure clean directory setup and start background tasks
     settings.dir.mkdir(parents=True, exist_ok=True)
     
-    # 1. Start background sync engine
+    # 1. Warm up LLM and start gate worker
+    llm_client.warmup()
+    gate_worker.start()
+
+    # 2. Start background sync engine
     sync_task = asyncio.create_task(sync_worker.run())
     
-    # 2. Start routine memory TTL pruner (runs every 60 minutes)
+    # 3. Start routine memory TTL pruner & chat retention (runs every 60 minutes)
     async def ttl_loop():
         while True:
             try:
                 sweep_expired_routine()
+                sessions.sweep()
             except Exception as e:
                 print(f"TTL prune warning: {e}")
             await asyncio.sleep(3600)
@@ -63,6 +71,9 @@ app.include_router(search.router)
 app.include_router(sync.router)
 app.include_router(conflicts.router)
 app.include_router(stream.router)
+app.include_router(assistant.router)
+app.include_router(suggestions.router)
+app.include_router(llm.router)
 
 @app.get("/health", tags=["Health"])
 def health():

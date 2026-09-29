@@ -50,30 +50,35 @@ export default function ConflictsPage() {
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl mx-auto">
       {/* Header */}
       <div>
-        <h1 className="text-xl font-bold tracking-tight text-foreground">
-          Conflict Resolution Inbox
-        </h1>
-        <p className="text-xs text-muted-foreground mt-0.5">
-          Review version discrepancies and semantic contradictions between offline edge devices.
+        <div className="flex items-center gap-2">
+          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
+            Conflict Resolution Inbox
+          </h1>
+          <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">
+            Branch &amp; Merge
+          </span>
+        </div>
+        <p className="text-xs text-slate-400 mt-1">
+          Review version discrepancies and concurrent conflicting edits between offline edge nodes.
         </p>
       </div>
 
       {/* Conflict List */}
       <div className="space-y-4">
         {isLoading ? (
-          <div className="p-8 text-center rounded-xl border border-border bg-card text-muted-foreground text-xs">
+          <div className="panel p-12 text-center text-slate-500 text-xs font-mono">
             Loading conflict inbox...
           </div>
         ) : !conflicts || conflicts.length === 0 ? (
-          <div className="p-12 text-center rounded-xl border border-border bg-card space-y-2">
-            <CheckCircle className="w-8 h-8 text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-semibold text-foreground">
+          <div className="panel p-12 text-center space-y-2">
+            <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
+            <h3 className="text-sm font-semibold text-white">
               Zero Conflicts Detected
             </h3>
-            <p className="text-xs text-muted-foreground max-w-sm mx-auto">
+            <p className="text-xs text-slate-400 max-w-sm mx-auto">
               All edge devices have converged cleanly or have not encountered concurrent contradictory edits.
             </p>
           </div>
@@ -87,46 +92,36 @@ export default function ConflictsPage() {
             return (
               <div
                 key={c.id}
-                className={`rounded-xl border p-5 space-y-4 transition-all ${
-                  isOpen
-                    ? "border-amber-500/40 bg-card shadow-sm"
-                    : "border-border bg-card/60 opacity-80"
-                }`}
+                className="panel p-4 sm:p-5 space-y-4"
               >
                 {/* Conflict Header */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`p-1.5 rounded-lg ${
-                        isOpen
-                          ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                          : "bg-muted text-muted-foreground border border-border"
-                      }`}
-                    >
+                <div className="flex items-center justify-between pb-3 border-b border-border">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-1.5 rounded-lg bg-amber-950/30 border border-amber-800/40 text-amber-400">
                       <AlertTriangle className="w-4 h-4" />
-                    </span>
+                    </div>
                     <div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold uppercase font-mono tracking-wider text-foreground">
+                        <span className="text-xs font-mono font-semibold uppercase tracking-wider text-white">
                           {c.kind} Conflict
                         </span>
                         <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono font-semibold uppercase ${
+                          className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-medium border ${
                             isOpen
-                              ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                              : "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20"
+                              ? "bg-amber-950/30 text-amber-400 border-amber-800/40"
+                              : "bg-emerald-950/30 text-emerald-400 border-emerald-800/40"
                           }`}
                         >
                           {c.status}
                         </span>
                       </div>
-                      <span className="text-[11px] font-mono text-muted-foreground">
+                      <span className="text-[11px] font-mono text-slate-500">
                         Memory ID: {c.memory_id}
                       </span>
                     </div>
                   </div>
 
-                  <span className="text-[11px] font-mono text-muted-foreground">
+                  <span className="text-[11px] font-mono text-slate-500">
                     {c.created_at
                       ? new Date(Number(c.created_at)).toLocaleTimeString()
                       : ""}
@@ -136,31 +131,31 @@ export default function ConflictsPage() {
                 {/* Side by Side Diff */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {/* Local version (Mine) */}
-                  <div className="rounded-lg border border-sky-500/30 bg-sky-950/10 p-3 space-y-2">
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-sky-400 font-mono">
+                      <span className="font-semibold text-sky-400 font-mono text-[11px]">
                         LOCAL (This Device)
                       </span>
-                      <span className="font-mono text-[10px] text-muted-foreground">
+                      <span className="font-mono text-[10px] text-slate-500">
                         v{local.version} · {local.author || local.device_id}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground bg-background/50 p-2.5 rounded border border-border leading-relaxed">
+                    <p className="text-xs text-slate-200 bg-slate-950 p-2.5 rounded border border-slate-800/80 leading-relaxed font-mono">
                       {local.text}
                     </p>
                   </div>
 
                   {/* Remote version (Fleet) */}
-                  <div className="rounded-lg border border-purple-500/30 bg-purple-950/10 p-3 space-y-2">
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2">
                     <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-purple-400 font-mono">
+                      <span className="font-semibold text-indigo-400 font-mono text-[11px]">
                         REMOTE (Fleet Server)
                       </span>
-                      <span className="font-mono text-[10px] text-muted-foreground">
+                      <span className="font-mono text-[10px] text-slate-500">
                         v{remote.version} · {remote.author || remote.device_id}
                       </span>
                     </div>
-                    <p className="text-xs text-foreground bg-background/50 p-2.5 rounded border border-border leading-relaxed">
+                    <p className="text-xs text-slate-200 bg-slate-950 p-2.5 rounded border border-slate-800/80 leading-relaxed font-mono">
                       {remote.text}
                     </p>
                   </div>
@@ -168,21 +163,21 @@ export default function ConflictsPage() {
 
                 {/* Merge Editor */}
                 {isEditing && (
-                  <div className="p-3 rounded-lg border border-border bg-background space-y-2">
-                    <label className="text-xs font-semibold text-foreground flex items-center gap-1.5">
-                      <Edit3 className="w-3.5 h-3.5 text-primary" />
+                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-950 space-y-3">
+                    <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                      <Edit3 className="w-3.5 h-3.5 text-sky-400" />
                       <span>Synthesized Merged Content:</span>
                     </label>
                     <textarea
                       rows={3}
                       value={mergedText}
                       onChange={(e) => setMergedText(e.target.value)}
-                      className="w-full p-2.5 rounded bg-card border border-border text-xs focus:outline-none focus:border-primary text-foreground font-sans"
+                      className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500 font-mono leading-relaxed"
                     />
                     <div className="flex justify-end gap-2">
                       <button
                         onClick={() => setEditingConflictId(null)}
-                        className="px-3 py-1 rounded text-xs border border-border hover:bg-muted text-muted-foreground"
+                        className="px-3 py-1.5 rounded-lg text-xs border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
                       >
                         Cancel
                       </button>
@@ -194,9 +189,9 @@ export default function ConflictsPage() {
                             text: mergedText,
                           })
                         }
-                        className="px-3 py-1 rounded text-xs bg-primary text-primary-foreground font-semibold hover:bg-sky-400"
+                        className="px-3.5 py-1.5 rounded-lg text-xs bg-sky-600 hover:bg-sky-500 text-white font-medium transition-colors cursor-pointer shadow-xs"
                       >
-                        Confirm & Push Merge
+                        Confirm &amp; Push Merge
                       </button>
                     </div>
                   </div>
@@ -213,7 +208,7 @@ export default function ConflictsPage() {
                         })
                       }
                       disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-sky-500/30 bg-sky-500/10 hover:bg-sky-500/20 text-sky-300 text-xs font-semibold transition-colors"
+                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
                     >
                       Keep Mine (Local)
                     </button>
@@ -226,7 +221,7 @@ export default function ConflictsPage() {
                         })
                       }
                       disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-purple-500/30 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-xs font-semibold transition-colors"
+                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
                     >
                       Keep Theirs (Remote)
                     </button>
@@ -236,7 +231,7 @@ export default function ConflictsPage() {
                         setEditingConflictId(c.id);
                         setMergedText(`${local.text}\n---\n${remote.text}`);
                       }}
-                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-sky-400 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
                     >
                       <GitMerge className="w-3.5 h-3.5" />
                       <span>Merge Notes</span>

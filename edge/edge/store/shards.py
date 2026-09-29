@@ -15,6 +15,7 @@ CONFIG = EdgeConfig(
 
 INDEXES = {
     "category": PayloadSchemaType.Keyword,
+    "gate_source": PayloadSchemaType.Keyword,
     "asset_tag": PayloadSchemaType.Keyword,
     "device_id": PayloadSchemaType.Keyword,
     "sync_state": PayloadSchemaType.Keyword,
@@ -37,6 +38,9 @@ class Shard:
                     self.shard = EdgeShard.load(str(self.path))
                     return
             except Exception as e:
+                err_msg = str(e)
+                if "WouldBlock" in err_msg or "Resource temporarily unavailable" in err_msg or "already borrowed" in err_msg:
+                    raise
                 print(f"Notice: Cleaning uninitialized or corrupted shard at {self.path} ({e})")
                 shutil.rmtree(self.path, ignore_errors=True)
 
