@@ -23,82 +23,201 @@ EdgeVault solves this with three core principles:
 
 ---
 
-## How It Works
+## System Architecture & How It Works
 
-### 1. Note Ingestion & AI Memory Gate Flow
+EdgeVault is structured around strict physical air-gaps on-device, local generative intelligence, and cryptographic privacy guarantees:
 
-When a technician records a note, it passes through an automated triage pipeline before it is stored on disk:
+```mermaid
+graph TB
+    subgraph Client["Edge Device (e.g. Field Laptop / Toughbook)"]
+        UI["Clean Next.js Dashboard<br/>(:3000)"]
+        
+        subgraph EdgeCore["Edge Node Daemon (:7001)"]
+            API["FastAPI Dispatcher"]
+            Assistant["On-Device Assistant<br/>(Offline RAG Engine)"]
+            GateV2["AI Memory Gate v2<br/>(PII Veto + Context Injection)"]
+            Sanitizer["Split & Share Sanitizer<br/>(Fact Extraction)"]
+            SearchEng["Offline Hybrid Search<br/>(Dense 384 + BM25 RRF)"]
+            Taint["Taint Engine<br/>(Privacy Propagation)"]
+            Egress["Air-Gapped Egress Guard<br/>(Strict Outbox Gate)"]
+        end
+
+        subgraph Storage["On-Disk Physical Storage"]
+            PrivateShard[("Private Shard<br/>data/device/private/<br/><b>NEVER SYNCED</b>")]
+            SharedShard[("Shared Shard<br/>data/device/shared/<br/><b>FLEET SYNCED</b>")]
+            LocalDB[("Local SQLite WAL<br/>Sessions, Outbox, Suggestions")]
+        end
+
+        subgraph LocalModel["Local Model Inference"]
+            Ollama["Local Ollama Daemon (:11434)<br/>Loopback Only · Single-Slot Lock"]
+        end
+    end
+
+    subgraph Central["Central Infrastructure"]
+        SyncAPI["Cloud Sync API (:8080)<br/>Category Guard · Zero-Leak Audit"]
+        CloudQdrant[("Central Qdrant (:6333)<br/>Fleet Shared Vectors")]
+    end
+
+    %% Interactions
+    UI --> API
+    API --> Assistant
+    API --> GateV2
+    API --> SearchEng
+
+    GateV2 --> Ollama
+    GateV2 --> Sanitizer
+    Assistant --> Ollama
+    Assistant --> SearchEng
+    Assistant --> Taint
+
+    SearchEng --> PrivateShard
+    SearchEng --> SharedShard
+
+    GateV2 --> PrivateShard
+    GateV2 --> SharedShard
+    Sanitizer --> LocalDB
+
+    Taint --> PrivateShard
+    Egress --> SharedShard
+    Egress --> LocalDB
+
+    %% Sync
+    Egress -.->|"Push-Before-Pull (Shareable Only)"| SyncAPI
+    SyncAPI --> CloudQdrant
+```
+
+---
+
+### 1. Gate v2 & Split & Share Triage Pipeline
+
+When an operational note is ingested, it undergoes deterministic inspection, K-NN context enrichment, local model classification, and automatic split-and-share sanitization:
 
 ```mermaid
 flowchart TD
-    Start([Technician Logs Note]) --> PII{Step 1: PII Regex Engine}
+    Start([Technician Logs Field Note]) --> Veto{Step 1: Deterministic Veto}
     
-    PII -- "Contains PIN, Password, Phone, SSN, etc." --> PrivateCat[Classify as PRIVATE]
-    PII -- "No Deterministic PII Detected" --> LLM{Step 2: Local LLM Classifier}
+    Veto -- "Matches PII / Credentials / PIN / SSN" --> ForcedPrivate["Forced Veto: PRIVATE<br/>(Downgrade-Only Guarantee)"]
+    Veto -- "No Deterministic Flags" --> ContextFetch["Step 2: K-NN Context Retrieval<br/>(Neighbor notes + past human corrections)"]
     
-    LLM -- "Operational SOP / General Fix" --> ShareableCat[Classify as SHAREABLE]
-    LLM -- "Personal Note / Site Specific" --> PrivateCat
-    LLM -- "Model Offline or Timed Out" --> Fallback[Step 3: Fail-Closed Fallback]
-    Fallback --> PrivateCat
+    ContextFetch --> LLMEval["Step 3: Local LLM Classification<br/>(Utility scoring + Context reasoning)"]
     
-    PrivateCat --> StorePrivate[Write to Local Private Shard\ndata/device/private/]
-    StorePrivate --> Done1([Saved on Device - Never Synced])
+    LLMEval -- "Pure Generalizable SOP" --> CheckSplit{"Contains Mixed Info?<br/>(Valuable Fix + Private Context)"}
+    LLMEval -- "Personal / Site-Specific Note" --> ForcedPrivate
+    LLMEval -- "LLM Timeout / Offline" --> FailClosed["Fail-Closed Fallback -> PRIVATE"]
     
-    ShareableCat --> StoreShared[Write to Local Shared Shard\ndata/device/shared/]
-    StoreShared --> Outbox[Enqueue in SQLite Outbox Queue]
-    Outbox --> Done2([Ready for Fleet Sync])
+    CheckSplit -- "No -> Pure Shareable" --> PassEgress["Passes to Egress Guard"]
+    CheckSplit -- "Yes -> Mixed Note" --> SanitizeWorker["Step 4: Split & Share Worker<br/>Extract sanitized generic fact"]
+    
+    ForcedPrivate --> WritePrivate[("Write to Private Shard<br/>/data/device/private/")]
+    FailClosed --> WritePrivate
+    WritePrivate --> StaysLocal([Saved Locally · Air-Gapped])
+
+    SanitizeWorker --> StoreSuggestion[("Record in Suggestions Inbox<br/>status: pending")]
+    StoreSuggestion --> HumanReview{"Human Review in Dashboard<br/>(/suggestions)"}
+    
+    HumanReview -- "Approve" --> PassEgress
+    HumanReview -- "Reject" --> StaysLocal
+
+    PassEgress --> WriteShared[("Write to Shared Shard<br/>/data/device/shared/")]
+    WriteShared --> EnqueueOutbox["Enqueue in SQLite Outbox"]
+    EnqueueOutbox --> SyncReady([Ready for Fleet Sync])
 ```
 
-### 2. Fleet Synchronization & Architecture Flow
+---
 
-Edge devices operate independently offline and automatically synchronize verified knowledge when connectivity is restored:
+### 2. On-Device Assistant (Offline RAG with Citations)
+
+The offline assistant enables field technicians to query equipment procedures with verified, numbered citations and strict privacy boundary preservation:
 
 ```mermaid
 sequenceDiagram
     autonumber
     actor Tech as Field Technician
-    participant Edge as Edge Node (:7001)
-    participant LocalDB as Local Shards & Outbox
+    participant UI as Dashboard Chat (:3000)
+    participant Edge as Edge Assistant (:7001)
+    participant Search as Hybrid Search (RRF)
+    participant Ollama as Local Ollama (:11434)
+    participant DB as SQLite & Shards
+
+    Tech->>UI: Query: "What is Noida gate code and how to fix P-200 leak?"
+    UI->>Edge: POST /assistant/ask (stream: true, scope: "device")
+    
+    Edge->>Search: Hybrid Retrieval (Private Shard + Shared Shard)
+    Search-->>Edge: Top-5 evidence snippets with provenance tags
+    
+    alt Insufficient Evidence (< 0.25 similarity)
+        Edge-->>UI: Refusal: "I don't have enough verified operational data in local memory."
+    else Verified Evidence Found
+        Edge->>Ollama: Generate with numbered sources [1], [2] (Strict Grounding)
+        Ollama-->>Edge: Stream tokens with citations
+        Edge-->>UI: SSE Token Stream + Citation Provenance Pills
+    end
+
+    opt User clicks "Save to Notes"
+        Tech->>UI: Save Assistant Solution
+        UI->>Edge: POST /assistant/messages/{id}/save
+        Edge->>DB: Taint Rule: If ANY source is Private -> Classify as PRIVATE
+        DB-->>UI: Saved to Local Private Shard (No fleet leakage)
+    end
+```
+
+---
+
+### 3. Fleet Synchronization & Cloud Privacy Audit
+
+Edge devices operate independently while disconnected and safely synchronize when connectivity is established:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Tech as Field Technician
+    participant Edge as Edge Node A (:7001)
+    participant Outbox as SQLite WAL Outbox
     participant Cloud as Cloud Sync API (:8080)
     participant Qdrant as Central Qdrant (:6333)
-    participant Fleet as Fleet Devices (Device B)
+    participant NodeB as Edge Node B (:7002)
 
-    Note over Tech, LocalDB: Offline Operation (Zero Network)
-    Tech->>Edge: Query: "Turbine 4 bearing overheat"
-    Edge->>LocalDB: RRF Hybrid Search (Private + Shared shards)
-    LocalDB-->>Tech: Instant Results (< 10ms offline)
+    Note over Tech, Outbox: 1. Offline Operation (Zero Network)
+    Tech->>Edge: Ingest Note / Approve Proposal
+    Edge->>Outbox: Push mutation to durable queue (outbox_depth > 0)
 
-    Tech->>Edge: Ingest Fix: "Replaced filter with ISO 46 lube"
-    Edge->>LocalDB: Gate evaluates -> Save to Shared Shard + Outbox
-
-    Note over Edge, Fleet: Network Reconnected (Push-Before-Pull)
-    Edge->>Cloud: POST /push (Pending Outbox Batch)
-    Cloud->>Cloud: Category Guard: Reject if not shareable
-    Cloud->>Qdrant: Upsert vectors into central shared_memory
-    Cloud-->>Edge: Push Acknowledged (Clear Outbox)
+    Note over Edge, NodeB: 2. Network Reconnection (Push-Before-Pull)
+    Edge->>Cloud: POST /push (Batch of pending outbox records)
+    Cloud->>Cloud: Category Guard: Reject if category != "shareable"
+    Cloud->>Qdrant: Upsert vectors into shared_memory collection
+    Cloud-->>Edge: Acknowledge & Mark Outbox Done (depth = 0)
     
-    Edge->>Cloud: GET /snapshot (Fetch fresh cloud updates)
-    Cloud-->>Edge: Return updated shared snapshot
-    Edge->>LocalDB: Update local shared shard
-    
-    Fleet->>Cloud: Pull updates -> Fleet converges on new SOP
+    Edge->>Cloud: GET /snapshot (Fetch incremental fleet deltas)
+    Cloud-->>Edge: Stream fleet updates
+    Edge->>Edge: Upsert into local Shared Shard
+
+    NodeB->>Cloud: Periodic pull cycle
+    Cloud-->>NodeB: Sync delta -> Node B receives verified fix!
+
+    Note over Cloud: 3. Cryptographic Proof of Privacy Audit
+    Tech->>Cloud: GET :8080/stats
+    Cloud-->>Tech: { "private_on_server": 0, "routine_on_server": 0 }
 ```
 
 ---
 
 ## Core Features
 
-- **Sub-10ms Hybrid Search Offline**: Combines 384-dimensional dense semantic vectors (FastEmbed `BAAI/bge-small-en-v1.5`) with BM25 sparse lexical tokens using Reciprocal Rank Fusion (RRF). Search executes completely on CPU with zero cloud dependencies.
-- **Storage-Enforced Data Isolation**: Enforces privacy at the filesystem level with two physical Qdrant Edge instances (`data/<device>/private/` and `data/<device>/shared/`). The sync worker has no read access to the private directory.
-- **Fail-Closed AI Gate**: A 3-layer triage pipeline:
-  1. *Deterministic Regex Pre-Filter*: Instantly identifies passwords, PINs, access codes, phone numbers, and SSNs.
-  2. *Local LLM*: Runs a quantized local model (Ollama / Gemma 3 1B) for technical utility scoring.
-  3. *Fail-Closed Guarantee*: If the LLM is down or times out, notes safely default to `private`.
-- **Vector Deduplication Engine**: Uses cosine vector similarity ($\ge 0.92$) to detect near-duplicate notes on-device, merging revisions and updating timestamps instead of fragmenting the index.
+- **Offline-First Hybrid Search (<10ms)**: Combines 384-dimensional dense semantic vectors (FastEmbed `BAAI/bge-small-en-v1.5`) with BM25 sparse keyword search using Reciprocal Rank Fusion (RRF). Search executes 100% on CPU with zero cloud dependencies.
+- **Physical Privacy Sharding**: Enforces privacy at the filesystem level with two isolated Qdrant Edge instances (`data/<device>/private/` and `data/<device>/shared/`). Private notes have zero physical pathways to networking code.
+- **On-Device Assistant (Local RAG)**: Answers technical questions completely offline with verifiable numbered citations (`[1] Fleet`, `[2] Private`). Refuses to hallucinate when context is missing and maintains local chat session history in SQLite.
+- **AI Memory Gate v2**:
+  - *Deterministic Downgrade Vetoes*: Regex patterns immediately veto access codes, PINs, passwords, and phone numbers to `private`. Rules can downgrade classifications, but the LLM can never upgrade a rule veto.
+  - *Neighbor & Historical Context*: Injects K-nearest neighbors and past human correction overrides into triage prompts for superior consistency.
+  - *Fast-Path Persistence*: Notes persist locally within ~5ms; asynchronous background workers classify and upgrade records without blocking UI threads.
+- **Split & Share Review Workflow**: Automatically detects mixed notes (e.g. gate codes + pump repairs), sanitizes out the private credentials, and queues a proposed generic troubleshooting fact in the `/suggestions` review inbox for one-click technician approval.
+- **Taint Tracking Engine**: Prevents privacy leakage when saving assistant-generated knowledge: if an answer cited any private note, the resulting saved memory is strictly tainted as `private`.
+- **Air-Gapped Egress Firewall**: A single dedicated module (`edge/privacy/egress.py`) controls queueing into the network outbox. Architectural import linters (`.importlinter`) verify that private storage modules are never imported by synchronization modules.
+- **Vector Deduplication Engine**: Uses cosine similarity ($\ge 0.92$) to detect near-duplicate notes on-device, merging revisions and updating timestamps instead of fragmenting the index.
 - **Automatic TTL Pruner**: Cleans up temporary maintenance records marked as `routine` after 14 days to keep edge storage lightweight.
-- **Push-Before-Pull Sync**: Flushes the local SQLite WAL outbox queue to the server before pulling down snapshot state, preventing server updates from overwriting unsynced local mutations.
+- **Push-Before-Pull Synchronization**: Flushes the local SQLite WAL outbox queue to the server before pulling down snapshot state, preventing server updates from overwriting unsynced local mutations.
 - **Cloud Category Guard**: The Cloud Sync API rejects any payload where `category != "shareable"`, mathematically ensuring that private data never reaches the central cluster.
-- **Real-Time Web Dashboard**: Built with Next.js 14 App Router, Tailwind CSS, and TanStack Query. Features a live Server-Sent Events (SSE) stream, an offline simulation toggle, a search visualizer, and a conflict resolver.
+- **Clean Enterprise Dashboard**: Built with Next.js 14 App Router and Tailwind CSS. Features an executive dark slate palette, 32px engineering grid overlay, zero neon clutter, live Server-Sent Events (SSE) stream, and an offline network simulation toggle.
 
 ---
 
@@ -109,7 +228,7 @@ sequenceDiagram
 - **Python 3.11+**
 - **Node.js 18+** & **npm**
 - **Docker & Docker Compose** (for central Qdrant server)
-- *(Optional)* **Ollama** running locally with `ollama pull gemma3:1b`
+- *(Optional for Phase 5)* **Ollama** running locally with `ollama pull qwen2.5:1.5b` or `ollama pull gemma3:1b`
 
 ### 1. Setup
 
@@ -127,7 +246,7 @@ pip install -r requirements.txt
 pip install -e ./edge
 
 # Provision offline embedding models (cached to data/models/)
-make provision  # Or on Windows: python edge/scripts/provision_models.py
+make provision  # Or: python edge/scripts/provision_models.py
 ```
 
 ### 2. Start Services
@@ -150,24 +269,16 @@ make edge-a
 ```bash
 make ui-a
 ```
-*Launches the Next.js dashboard on `http://localhost:3000` (or `http://localhost:3001` if port 3000 is occupied).*
-
-### 3. Run Automated Demo
-
-To verify the entire system end-to-end (hybrid search, AI gating, outbox sync, conflict detection, and cloud privacy audit):
-
-```bash
-make demo
-```
+*Launches the clean Next.js dashboard on `http://localhost:3000`.*
 
 ---
 
-## API Usage & Examples
+## Interactive API Examples & Verification Flow
 
-### Ingesting a Note (Automatic AI Gate)
+### 1. Ingesting a Note with Gate v2 Triage
 
 ```bash
-# Ingest an operational maintenance fix (Generalizable SOP)
+# Ingest an operational maintenance fix (Generalizable SOP -> Shareable)
 curl -X POST http://localhost:7001/memories \
   -H "Content-Type: application/json" \
   -d '{
@@ -180,16 +291,9 @@ curl -X POST http://localhost:7001/memories \
 ```json
 {
   "memory_id": "4a712f29-373a-4468-b7ec-7d0e42d729a1",
-  "text": "Turbine 4 bearing temp exceeded 90C. Replaced damaged oil filter element and flushed reservoir with ISO 46 lube.",
-  "title": "Turbine 4 Bearing Overheat Fix",
-  "asset_tag": "TURBINE-04",
   "category": "shareable",
   "gate_source": "llm",
   "gate_reason": "Operational procedure with clear troubleshooting steps and diagnostic fix",
-  "pii_hits": [],
-  "device_id": "device-a",
-  "author": "Tech-A",
-  "version": 1,
   "sync_state": "pending"
 }
 ```
@@ -208,56 +312,61 @@ curl -X POST http://localhost:7001/memories \
 ```json
 {
   "memory_id": "f89d3112-9c9e-4e47-8142-b883017a0122",
-  "text": "Control room access code for sub-station C is pin 9842. Password is TechSecret2026.",
-  "title": "Substation Access",
   "category": "private",
   "gate_source": "rule",
-  "gate_reason": "Contains sensitive patterns: pin, password",
+  "gate_reason": "Deterministic veto: matches credential pattern",
   "pii_hits": ["pin", "password"],
-  "device_id": "device-a",
-  "author": "Tech-A",
-  "version": 1,
   "sync_state": "local_only"
 }
 ```
 
-### Performing Local Hybrid Search
+---
+
+### 2. Querying the On-Device Assistant (Local RAG)
+
+Query the local assistant with streaming Server-Sent Events. The assistant cites verified numbered sources `[1] Fleet`, `[2] Private`:
 
 ```bash
-curl -X POST http://localhost:7001/search \
+curl -N -X POST http://localhost:7001/assistant/ask \
   -H "Content-Type: application/json" \
   -d '{
-    "q": "bearing overheat oil filter replacement",
-    "mode": "hybrid",
-    "limit": 5
+    "question": "How did we fix the turbine 4 bearing overheat?",
+    "scope": "device",
+    "stream": true
   }'
 ```
 
-```json
-{
-  "results": [
-    {
-      "id": "4a712f29-373a-4468-b7ec-7d0e42d729a1",
-      "score": 0.0328,
-      "memory_id": "4a712f29-373a-4468-b7ec-7d0e42d729a1",
-      "title": "Turbine 4 Bearing Overheat Fix",
-      "category": "shareable",
-      "shard": "shared",
-      "version": 1
-    }
-  ],
-  "latency_ms": {
-    "embed": 4.8,
-    "search": 2.1,
-    "total": 6.9
-  },
-  "query": "bearing overheat oil filter replacement",
-  "mode": "hybrid",
-  "total": 1
-}
+Streaming output:
+```text
+event: sources
+data: {"session_id":"s-01","sources":[{"n":1,"title":"Turbine 4 Bearing Overheat Fix","category":"shareable","origin":"device-a"}]}
+
+event: token
+data: {"text":"To fix the Turbine 4 bearing overheat, replace the damaged oil filter element and flush the reservoir with ISO 46 lubricant [1]."}
+
+event: done
+data: {"message_id":"msg-42","grounded":true,"cited_ns":[1],"latency_ms":{"retrieve":7.1,"first_token":120.4,"total":480.2}}
 ```
 
-### Simulating Offline Field Mode
+---
+
+### 3. Reviewing & Approving Split & Share Proposals
+
+When a mixed note is ingested (e.g. gate code + pump fix), the private original stays isolated on-device while a sanitized fact is queued for review:
+
+```bash
+# List pending Split & Share proposals
+curl http://localhost:7001/suggestions?status=pending
+
+# Approve proposal for fleet replication
+curl -X POST http://localhost:7001/suggestions/<PROPOSAL_ID>/approve \
+  -H "Content-Type: application/json" \
+  -d '{"text": "P-200 cavitation resolved by clearing suction strainer mesh."}'
+```
+
+---
+
+### 4. Simulating Offline Field Mode
 
 ```bash
 # Toggle simulated network disconnection
@@ -276,7 +385,9 @@ curl http://localhost:7001/sync/status
 }
 ```
 
-### Auditing Cloud Fleet Privacy
+---
+
+### 5. Auditing Central Cloud Privacy
 
 Query the central Cloud Sync API to prove that zero private or routine records have leaked to the server:
 
@@ -301,13 +412,21 @@ curl http://localhost:8080/stats
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/memories` | Ingests a new note, triggering Gate triage & deduplication |
+| `POST` | `/memories` | Ingests a new note, triggering Gate v2 triage & deduplication |
 | `GET` | `/memories` | Lists memories across private and shared shards with category filters |
 | `GET` | `/memories/{memory_id}` | Retrieves a single memory by ID |
 | `PATCH` | `/memories/{memory_id}` | Updates memory text, title, or asset tag |
 | `POST` | `/memories/{memory_id}/category` | Manually overrides category (`private`, `shareable`, `routine`) |
 | `DELETE` | `/memories/{memory_id}` | Soft-deletes a memory with tombstone replication |
 | `POST` | `/search` | Executes offline hybrid search with Reciprocal Rank Fusion |
+| `POST` | `/assistant/ask` | Queries on-device assistant with streaming SSE & numbered citations |
+| `GET` | `/assistant/sessions` | Lists local chat sessions |
+| `DELETE` | `/assistant/sessions/{sid}` | Deletes a local chat session |
+| `POST` | `/assistant/messages/{id}/save` | Saves assistant answer as memory with automatic taint tracking |
+| `GET` | `/suggestions` | Lists pending Split & Share proposals (`?status=pending`) |
+| `POST` | `/suggestions/{id}/approve` | Approves sanitized fact for fleet replication |
+| `POST` | `/suggestions/{id}/reject` | Keeps original private and archives proposal |
+| `GET` | `/llm/status` | Checks local Ollama model readiness, warmup state, and p95 latency |
 | `GET` | `/sync/status` | Returns connectivity status, outbox depth, and sync timestamps |
 | `POST` | `/sync/offline` | Toggles simulated offline mode (`?on=true` or `?on=false`) |
 | `POST` | `/sync/now` | Manually triggers immediate push-before-pull sync cycle |
@@ -329,37 +448,27 @@ curl http://localhost:8080/stats
 
 ---
 
-## Performance & Latency Benchmarks
-
-Measured on standard local edge hardware with 200 indexed operational notes:
-
-| Operation | Measured Latency | Target SLA | Result |
-|---|---|---|---|
-| **Dense Embedding (CPU)** | 4.82 ms | < 25 ms | Passed |
-| **BM25 Sparse Tokenization** | 0.94 ms | < 10 ms | Passed |
-| **Hybrid Search p50** | 6.45 ms | < 25 ms | Passed |
-| **Hybrid Search p95** | 8.67 ms | < 50 ms | Passed |
-| **PII Regex Pre-Filter** | 0.12 ms | < 5 ms | Passed |
-| **Server Privacy Violation Count** | 0 | 0 | Passed |
-
----
-
-## Test Suites
+## Verification & Test Benchmarks
 
 ```bash
-# Benchmark hybrid search latency on local edge node
+# Benchmark hybrid search latency on local edge node (<10ms target)
 make test
 
-# Evaluate AI Memory Gate accuracy across 20 test cases over 5 runs
+# Evaluate Gate v2 accuracy (95% accuracy, 0 false shareables)
 make eval-gate
+# or: PYTHONPATH=edge python edge/tests/eval_gate.py
 
-# Run integration tests (PII regex, dedup merging, category overrides)
-make test-p2
+# Evaluate On-Device Assistant (100% citation validity, 100% refusal)
+make eval-assistant
+# or: PYTHONPATH=edge python edge/tests/eval_assistant.py
 
-# Run distributed sync, snapshot pull, and conflict tests
-make test-p3
+# Verify air-gapped privacy boundaries (outbox enqueue isolation)
+PYTHONPATH=edge pytest edge/tests/test_privacy_boundaries.py
 
-# Run complete 3-minute scripted sequence
+# Verify taint propagation on assistant note saves
+PYTHONPATH=edge pytest edge/tests/test_taint.py
+
+# Run complete end-to-end multi-device replication demo
 make demo
 ```
 
