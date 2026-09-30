@@ -10,7 +10,98 @@ import {
   ArrowRight,
   ShieldAlert,
   Edit3,
+  Loader2,
+  Sparkles,
 } from "lucide-react";
+
+type Analysis = {
+  relation: "progression" | "contradiction" | "same_fact" | "unknown";
+  explanation: string;
+  recommendation: "keep_local" | "keep_remote" | "merge";
+  merged_text: string;
+  source: string;
+  value_differences?: string[];
+  ms?: number;
+};
+
+const RELATION_STYLE: Record<string, { label: string; cls: string }> = {
+  progression: { label: "Progression over time", cls: "bg-sky-950/40 text-sky-300 border-sky-800/50" },
+  contradiction: { label: "Genuine contradiction", cls: "bg-rose-950/40 text-rose-300 border-rose-800/50" },
+  same_fact: { label: "Same fact, reworded", cls: "bg-emerald-950/40 text-emerald-300 border-emerald-800/50" },
+  unknown: { label: "Model unavailable", cls: "bg-slate-800/60 text-slate-300 border-slate-700" },
+};
+
+const ACTION_LABEL: Record<string, string> = {
+  keep_local: "Keep Mine (Local)",
+  keep_remote: "Keep Theirs (Remote)",
+  merge: "Merge Notes",
+};
+
+// On-device LLM reconciliation for one conflict. Cached on the edge after the first run.
+function useAnalysis(c: any) {
+  return useQuery<Analysis>({
+    queryKey: ["conflict-analysis", c.id],
+    queryFn: () => fetchEdge(`/conflicts/${c.id}/analyze`, { method: "POST" }),
+    initialData: c.analysis ?? undefined,
+    enabled: c.status === "open" && !c.analysis,
+    staleTime: Infinity,
+    retry: false,
+  });
+}
+
+function AnalysisBanner({ a, loading }: { a?: Analysis; loading: boolean }) {
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 p-3 rounded-lg border border-indigo-900/50 bg-indigo-950/20 text-xs text-indigo-300">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+        <span>Reconciling the two reports on this device…</span>
+      </div>
+    );
+  }
+  if (!a) return null;
+  const style = RELATION_STYLE[a.relation] ?? RELATION_STYLE.unknown;
+  return (
+    <div className="p-3 rounded-lg border border-indigo-900/50 bg-indigo-950/20 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <Sparkles className="w-3.5 h-3.5 text-indigo-300" />
+        <span className="text-[11px] font-semibold uppercase tracking-wider text-indigo-200 font-mono">
+          AI Reconciliation
+        </span>
+        <span className={`px-2 py-0.5 rounded border text-[10px] font-mono uppercase ${style.cls}`}>
+          {style.label}
+        </span>
+        <span className="text-[10px] font-mono text-slate-500">
+          {a.source === "fallback" ? "rules only" : "on-device model"}
+          {a.ms ? ` · ${(a.ms / 1000).toFixed(1)} s` : ""}
+        </span>
+      </div>
+      <p className="text-xs text-slate-200 leading-relaxed">{a.explanation}</p>
+      {a.value_differences && a.value_differences.length > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {a.value_differences.map((d) => (
+            <span key={d} className="px-1.5 py-0.5 rounded bg-rose-950/40 border border-rose-800/40 text-rose-300 text-[10px] font-mono">
+              {d}
+            </span>
+          ))}
+        </div>
+      )}
+      <p className="text-[11px] text-slate-400">
+        Recommended: <span className="text-white font-medium">{ACTION_LABEL[a.recommendation]}</span>
+        <span className="text-slate-500"> · advisory, you decide</span>
+      </p>
+    </div>
+  );
+}
+
+function ConflictAnalysis({ c, children }: { c: any; children: (a?: Analysis) => React.ReactNode }) {
+  const { data, isFetching } = useAnalysis(c);
+  return (
+    <>
+      {c.status === "open" && <AnalysisBanner a={data} loading={isFetching && !data} />}
+      {children(data)}
+    </>
+  );
+}
 
 export default function ConflictsPage() {
   const qc = useQueryClient();
@@ -161,6 +252,8 @@ export default function ConflictsPage() {
                   </div>
                 </div>
 
+                <ConflictAnalysis c={c}>
+                {(a) => (<>
                 {/* Merge Editor */}
                 {isEditing && (
                   <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-950 space-y-3">
@@ -208,7 +301,7 @@ export default function ConflictsPage() {
                         })
                       }
                       disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+                      className={`px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer${a?.recommendation === "keep_local" ? " ring-1 ring-indigo-400 text-white" : ""}`}
                     >
                       Keep Mine (Local)
                     </button>
@@ -221,7 +314,7 @@ export default function ConflictsPage() {
                         })
                       }
                       disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
+                      className={`px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer${a?.recommendation === "keep_remote" ? " ring-1 ring-indigo-400 text-white" : ""}`}
                     >
                       Keep Theirs (Remote)
                     </button>
@@ -229,15 +322,18 @@ export default function ConflictsPage() {
                     <button
                       onClick={() => {
                         setEditingConflictId(c.id);
-                        setMergedText(`${local.text}\n---\n${remote.text}`);
+                        // Pre-fill with the model's grounded merge when it proposed one
+                        setMergedText(a?.merged_text || `${local.text}\n---\n${remote.text}`);
                       }}
-                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+                      className={`px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs${a?.recommendation === "merge" ? " ring-2 ring-indigo-300" : ""}`}
                     >
                       <GitMerge className="w-3.5 h-3.5" />
                       <span>Merge Notes</span>
                     </button>
                   </div>
                 )}
+                </>)}
+                </ConflictAnalysis>
               </div>
             );
           })

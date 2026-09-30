@@ -1,0 +1,7 @@
+# Cloud Sync API runtime (pinned: the versions verified with the edge fleet)
+fastapi==0.141.1
+uvicorn[standard]==0.54.0
+qdrant-client==1.19.1
+httpx==0.28.1
+python-dotenv==1.2.3
+pydantic==2.13.5

@@ -23,7 +23,7 @@ from edge.store import embed
 from edge.sync import outbox, push, pull
 from edge import db
 
-SYNC_API_URL = "http://localhost:8080"
+SYNC_API_URL = settings.sync_api_url  # same cloud the edge sync code talks to
 
 async def test_full_sync_lifecycle():
     print("\n--- Step 1: Health & Clean Server Stats ---")
@@ -199,6 +199,66 @@ async def test_full_sync_lifecycle():
         got = shared.shard.retrieve([old_id], True, False)
     assert got, "Record with an old device timestamp was not delivered by the delta pull"
     print("Server-clock pull VERIFIED: offline edit with an old updated_at was delivered.")
+
+    print("\n--- Step 10: Cross-device corroboration (Fleet Verified) ---")
+    import random, uuid
+    from qdrant_client import QdrantClient
+    tag = f"P-{random.randint(100, 999)}"
+    qc = QdrantClient(url="http://localhost:6333")
+    # a) This device reports a fix
+    mine = service.create(text=f"Pump {tag} seal leak fixed by replacing the mechanical seal with a Viton seal.",
+                          asset_tag=tag, category="shareable", dedup=False)
+
+    def raw_push(device, text):
+        mid = str(uuid.uuid4())
+        vec = embed.embed_doc(text)
+        pl = {"memory_id": mid, "text": text, "title": "", "asset_tag": tag, "category": "shareable",
+              "device_id": device, "version": 1, "base_version": 0, "deleted": False,
+              "created_at": int(time.time() * 1000), "updated_at": int(time.time() * 1000)}
+        body = {"device_id": device, "items": [{"memory_id": mid, "op": "upsert", "version": 1, "base_version": 0,
+                "point": {"id": mid, "payload": pl, "vector": {"dense": vec["dense"],
+                          "bm25": {"indices": list(vec["bm25"].indices), "values": list(vec["bm25"].values)}}}}]}
+        return mid, body
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        while outbox.depth() > 0:
+            await push.push_once(client)
+        # b) An independent device reports the same fact in its own words
+        b_id, b_body = raw_push("device-y", f"Replaced the mechanical seal on pump {tag} with a Viton seal to fix the leak.")
+        await client.post(f"{SYNC_API_URL}/push", json=b_body)
+        # c) A third device reports the same topic with a different value: not corroboration
+        c_id, c_body = raw_push("device-z", f"Pump {tag} seal leak fixed by replacing the mechanical seal; set flow to 45 GPM.")
+        await client.post(f"{SYNC_API_URL}/push", json=c_body)
+        assert await pull.pull_once(client)
+
+    srv = {str(p.id): p.payload for p in qc.retrieve("shared_memory", ids=[mine["memory_id"], b_id, c_id], with_payload=True)}
+    assert srv[mine["memory_id"]]["fleet_verified"] and srv[b_id]["fleet_verified"], srv
+    assert set(srv[b_id]["corroborated_by"]) == {settings.device_id, "device-y"}
+    assert not srv[c_id].get("fleet_verified"), "A report with different values must not count as corroboration"
+    from edge.store.shards import shared as shared_shard
+    with shared_shard.lock:
+        local = shared_shard.shard.retrieve([mine["memory_id"]], True, False)[0].payload
+    assert local.get("fleet_verified") and local.get("corroboration_count") == 2, local
+    print(f"Corroboration VERIFIED: {tag} fix verified by {srv[b_id]['corroborated_by']}; "
+          "differing-value report not counted; this device's own copy updated on pull.")
+
+    print("\n--- Step 11: Another device's edit at the same version is a conflict, not a retry ---")
+    note = service.create(text=f"Relief valve V-{random.randint(100, 999)} set pressure is 10 bar.",
+                          category="shareable", dedup=False)
+    async with httpx.AsyncClient(timeout=15) as client:
+        while outbox.depth() > 0:
+            await push.push_once(client)
+        # Same author field, version and base as the server copy, different text: before the fix
+        # the server treated this as an idempotent retry and silently dropped the edit.
+        other = {**note, "text": note["text"].replace("10 bar", "12 bar"), "version": 1, "base_version": 0}
+        r = await client.post(f"{SYNC_API_URL}/push", json={"device_id": "device-q", "items": [{
+            "memory_id": note["memory_id"], "op": "upsert", "version": 1, "base_version": 0,
+            "point": {"id": note["memory_id"], "payload": other,
+                      "vector": {"dense": [0.02] * 384, "bm25": {"indices": [1], "values": [1.0]}}}}]})
+        res = r.json()
+    assert res["conflicts"] and res["conflicts"][0]["kind"] == "version", res
+    assert note["memory_id"] not in res["accepted"]
+    print("Same-version edit VERIFIED: a different device's edit raised a version conflict.")
 
     print("\n==========================================")
     print("ALL PHASE 3 SYNC & CONFLICT TESTS PASSED!")

@@ -340,6 +340,14 @@ export default function MemoriesPage() {
                           flags={m.gate_flags}
                           contextUsed={m.gate_context}
                         />
+                        {m.fleet_verified && (
+                          <span
+                            className="inline-flex mt-1 px-1.5 py-0.5 rounded border border-emerald-700/60 bg-emerald-950/40 text-emerald-300 text-[10px] font-mono"
+                            title={`Independently reported by: ${(m.corroborated_by || []).join(", ")}`}
+                          >
+                            Fleet verified · {m.corroboration_count ?? m.corroborated_by?.length} devices
+                          </span>
+                        )}
                       </td>
 
                       <td className="p-3 font-mono">

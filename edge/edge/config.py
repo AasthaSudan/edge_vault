@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     dense_model: str = "BAAI/bge-small-en-v1.5"
     dense_dim: int = 384
     sync_api_url: str = "http://localhost:8080"
+    fleet_api_key: str = ""           # sent as a Bearer token to the cloud sync API
+    # Browser origins allowed to call this edge API. Never "*": the edge serves PRIVATE notes,
+    # and any web page the technician opens could otherwise read them from localhost.
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
     ollama_model: str = "qwen2.5:1.5b"
     llm_host: str = "http://127.0.0.1:11434"
     llm_num_ctx: int = 4096
@@ -27,6 +31,13 @@ class Settings(BaseSettings):
     dedup_threshold: float = 0.92
     routine_ttl_days: int = 14
     port: int = 7001
+
+    def cloud_headers(self) -> dict:
+        return {"Authorization": f"Bearer {self.fleet_api_key}"} if self.fleet_api_key else {}
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip() and o.strip() != "*"]
 
     @property
     def dir(self) -> Path:

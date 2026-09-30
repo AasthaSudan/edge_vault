@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS conflicts (
     remote_json TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open', -- open | resolved
     resolution TEXT, -- keep_local | keep_remote | merged
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    analysis_json TEXT -- cached on-device LLM reconciliation (see assistant/reconcile.py)
 );
 
 CREATE TABLE IF NOT EXISTS settings (

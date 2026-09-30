@@ -1,0 +1,40 @@
+# EdgeVault cloud stack for production: Qdrant + Cloud Sync API.
+#
+#   cp cloud/.env.production.example cloud/.env.production   # fill in the secrets
+#   docker compose -f docker-compose.prod.yml --env-file cloud/.env.production up -d --build
+#
+# Put the API behind a TLS-terminating reverse proxy (Caddy, nginx, a cloud load balancer);
+# edge devices must reach it over HTTPS. Qdrant is NOT published: only the API talks to it.
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.1   # the server version the fleet was verified against
+    restart: unless-stopped
+    environment:
+      - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY:?set QDRANT_API_KEY}
+      - QDRANT__SERVICE__ENABLE_STATIC_CONTENT=0
+      - QDRANT__LOG_LEVEL=INFO
+    volumes:
+      - qdrant_data:/qdrant/storage
+    expose:
+      - "6333"
+
+  sync-api:
+    build: ./cloud
+    restart: unless-stopped
+    depends_on:
+      - qdrant
+    environment:
+      - EDGEVAULT_ENV=production
+      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_API_KEY=${QDRANT_API_KEY:?set QDRANT_API_KEY}
+      - FLEET_API_KEY=${FLEET_API_KEY:?set FLEET_API_KEY}
+      - CORS_ORIGINS=${CORS_ORIGINS:?set CORS_ORIGINS}
+      - CORROBORATION_MIN_SCORE=${CORROBORATION_MIN_SCORE:-0.88}
+    volumes:
+      - sync_data:/data
+    ports:
+      - "${SYNC_API_BIND:-127.0.0.1}:8080:8080"   # expose via your reverse proxy, not directly
+
+volumes:
+  qdrant_data:
+  sync_data:
