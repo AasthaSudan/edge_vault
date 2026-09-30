@@ -4,19 +4,27 @@
 
 /* Light theme (default) */
 :root {
-  --bg: 250 250 250;
+  --bg: 247 247 248;
   --surface: 255 255 255;
-  --subtle: 244 244 245;
-  --line: 228 228 231;
+  --subtle: 243 243 245;
+  --line: 229 229 233;
   --line-strong: 212 212 216;
-  --fg: 24 24 27;
-  --muted: 113 113 122;
-  --faint: 161 161 170;
-  --accent: 37 99 235;
+  --fg: 17 17 19;
+  --muted: 100 100 110;
+  --faint: 150 150 158;
+  --accent: 24 24 27;
+  --accent-2: 82 82 91;
+  --on-accent: 255 255 255;
   --ok: 22 163 74;
   --warn: 217 119 6;
   --danger: 220 38 38;
-  --private: 124 58 237;
+  --shared: 42 120 214;
+  --private: 213 81 129;
+  --temp: 237 161 0;
+  --shadow: 0 0 0;
+  /* The Home banner is dark in both themes */
+  --hero-from: 17 17 19;
+  --hero-to: 44 44 50;
   color-scheme: light;
 }
 
@@ -24,35 +32,49 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: 9 9 11;
-    --surface: 19 19 22;
-    --subtle: 30 30 34;
-    --line: 39 39 42;
-    --line-strong: 63 63 70;
+    --surface: 17 17 20;
+    --subtle: 26 26 30;
+    --line: 38 38 43;
+    --line-strong: 58 58 65;
     --fg: 244 244 245;
     --muted: 161 161 170;
     --faint: 113 113 122;
-    --accent: 96 165 250;
+    --accent: 228 228 231;
+    --accent-2: 161 161 170;
+    --on-accent: 9 9 11;
     --ok: 74 222 128;
     --warn: 251 191 36;
     --danger: 248 113 113;
-    --private: 167 139 250;
+    --shared: 57 135 229;
+    --private: 213 81 129;
+    --temp: 201 133 0;
+    --shadow: 0 0 0;
+    --hero-from: 20 20 23;
+    --hero-to: 42 42 48;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: 9 9 11;
-  --surface: 19 19 22;
-  --subtle: 30 30 34;
-  --line: 39 39 42;
-  --line-strong: 63 63 70;
+  --surface: 17 17 20;
+  --subtle: 26 26 30;
+  --line: 38 38 43;
+  --line-strong: 58 58 65;
   --fg: 244 244 245;
   --muted: 161 161 170;
   --faint: 113 113 122;
-  --accent: 96 165 250;
+  --accent: 228 228 231;
+  --accent-2: 161 161 170;
+  --on-accent: 9 9 11;
   --ok: 74 222 128;
   --warn: 251 191 36;
   --danger: 248 113 113;
-  --private: 167 139 250;
+  --shared: 57 135 229;
+  --private: 213 81 129;
+  --temp: 201 133 0;
+  --shadow: 0 0 0;
+  --hero-from: 20 20 23;
+  --hero-to: 42 42 48;
   color-scheme: dark;
 }
 
@@ -71,21 +93,24 @@
 
 @layer components {
   .card {
-    @apply bg-surface border border-line rounded-xl;
+    @apply bg-surface border border-line rounded-2xl shadow-card;
+  }
+  .card-link {
+    @apply transition-all hover:border-line-strong hover:shadow-lift;
   }
 
   .btn {
     @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-sm font-medium whitespace-nowrap
-      transition-colors select-none disabled:opacity-50 disabled:pointer-events-none;
+      transition-all select-none disabled:opacity-50 disabled:pointer-events-none;
   }
   .btn-sm {
     @apply h-8 px-3 text-[13px];
   }
   .btn-primary {
-    @apply bg-fg text-bg hover:bg-fg/85;
+    @apply bg-accent text-on-accent shadow-sm hover:bg-accent/90 hover:shadow-glow;
   }
   .btn-secondary {
-    @apply bg-surface text-fg border border-line hover:bg-subtle;
+    @apply bg-surface text-fg border border-line shadow-sm hover:bg-subtle hover:border-line-strong;
   }
   .btn-ghost {
     @apply text-muted hover:text-fg hover:bg-subtle;
@@ -107,6 +132,26 @@
 
   .tag {
     @apply inline-flex items-center rounded-md border border-line bg-subtle px-1.5 py-px text-xs font-medium text-muted;
+  }
+
+  /* Small uppercase heading above a group of items */
+  .eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-faint;
+  }
+
+  /* The Home banner: charcoal, with a faint dot grid */
+  .hero {
+    background-color: rgb(var(--hero-from));
+    background-image:
+      radial-gradient(rgb(255 255 255 / 0.06) 1px, transparent 1px),
+      radial-gradient(60% 90% at 100% 0%, rgb(var(--hero-to)) 0%, transparent 70%),
+      linear-gradient(135deg, rgb(var(--hero-from)) 0%, rgb(var(--hero-to)) 100%);
+    background-size: 18px 18px, 100% 100%, 100% 100%;
+  }
+
+  /* A faint wash of light behind the top of every page */
+  .page-glow {
+    background: radial-gradient(50% 60% at 75% 0%, rgb(var(--fg) / 0.035), transparent 70%);
   }
 
   /* Horizontally swipeable row (filter chips on phones) without a visible scrollbar */

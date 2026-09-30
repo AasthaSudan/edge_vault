@@ -3,6 +3,7 @@
 import React, { createContext, useCallback, useContext, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { CheckCircle2, AlertCircle, Info, X } from "lucide-react";
+import { EdgeEventsProvider } from "@/lib/sse";
 
 type ToastKind = "success" | "error" | "info";
 type Toast = { id: number; kind: ToastKind; text: string };
@@ -23,7 +24,9 @@ export default function Providers({ children }: { children: React.ReactNode }) {
       new QueryClient({
         defaultOptions: {
           queries: {
-            staleTime: 1000,
+            // Live edge events mark data stale when it changes, so switching tabs can show the
+            // cached data instead of refetching everything each time
+            staleTime: 15_000,
             refetchOnWindowFocus: true,
           },
         },
@@ -44,26 +47,28 @@ export default function Providers({ children }: { children: React.ReactNode }) {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <ToastContext.Provider value={push}>
-        {children}
-        <div
-          aria-live="polite"
-          className="fixed z-[60] bottom-20 md:bottom-6 left-1/2 -translate-x-1/2 md:left-auto md:right-6 md:translate-x-0 flex flex-col gap-2 w-[calc(100%-2rem)] max-w-sm"
-        >
-          {toasts.map((t) => {
-            const Icon = ICON[t.kind];
-            return (
-              <div key={t.id} className="card shadow-pop flex items-start gap-3 px-4 py-3 animate-fade-in">
-                <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${TONE[t.kind]}`} />
-                <p className="text-sm flex-1">{t.text}</p>
-                <button onClick={() => dismiss(t.id)} className="text-faint hover:text-fg" aria-label="Dismiss">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-            );
-          })}
-        </div>
-      </ToastContext.Provider>
+      <EdgeEventsProvider>
+        <ToastContext.Provider value={push}>
+          {children}
+          <div
+            aria-live="polite"
+            className="fixed z-[60] bottom-20 lg:bottom-6 left-1/2 -translate-x-1/2 lg:left-auto lg:right-6 lg:translate-x-0 flex flex-col gap-2 w-[calc(100%-2rem)] max-w-sm"
+          >
+            {toasts.map((t) => {
+              const Icon = ICON[t.kind];
+              return (
+                <div key={t.id} className="card shadow-pop flex items-start gap-3 px-4 py-3 animate-fade-in">
+                  <Icon className={`w-4 h-4 mt-0.5 shrink-0 ${TONE[t.kind]}`} />
+                  <p className="text-sm flex-1">{t.text}</p>
+                  <button onClick={() => dismiss(t.id)} className="text-faint hover:text-fg" aria-label="Dismiss">
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </ToastContext.Provider>
+      </EdgeEventsProvider>
     </QueryClientProvider>
   );
 }

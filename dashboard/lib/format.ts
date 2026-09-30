@@ -2,11 +2,38 @@
 
 export type Category = "shareable" | "private" | "routine";
 
-export const CATEGORY: Record<string, { label: string; dot: string; text: string; hint: string }> = {
-  shareable: { label: "Shared", dot: "bg-accent", text: "text-accent", hint: "Visible to your team" },
-  private: { label: "Private", dot: "bg-private", text: "text-private", hint: "Stays on this device" },
-  routine: { label: "Temporary", dot: "bg-warn", text: "text-warn", hint: "Deleted after 14 days" },
+// Literal class names so Tailwind keeps them: dot/bar fill, icon color, soft tint
+export const CATEGORY: Record<
+  string,
+  { key: Category; label: string; dot: string; text: string; soft: string; hint: string }
+> = {
+  shareable: {
+    key: "shareable",
+    label: "Shared",
+    dot: "bg-shared",
+    text: "text-shared",
+    soft: "bg-shared/10",
+    hint: "Visible to your team",
+  },
+  private: {
+    key: "private",
+    label: "Private",
+    dot: "bg-private",
+    text: "text-private",
+    soft: "bg-private/10",
+    hint: "Stays on this device",
+  },
+  routine: {
+    key: "routine",
+    label: "Temporary",
+    dot: "bg-temp",
+    text: "text-temp",
+    soft: "bg-temp/10",
+    hint: "Deleted after 14 days",
+  },
 };
+
+export const CATEGORY_ORDER: Category[] = ["shareable", "private", "routine"];
 
 export function category(c?: string) {
   return CATEGORY[(c || "private").toLowerCase()] ?? CATEGORY.private;
@@ -99,6 +126,48 @@ export function errorDetail(err: unknown): string {
   } catch {
     return msg;
   }
+}
+
+export function initials(name?: string) {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return "?";
+  return (parts.length === 1 ? parts[0].slice(0, 2) : parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+export function percent(part: number, whole: number) {
+  return whole > 0 ? Math.round((part / whole) * 100) : 0;
+}
+
+const TAG = /^[A-Z]{1,10}-\d{1,4}[A-Z]?$/; // same shape as ASSET_TAG in edge/assistant/retrieve.py
+
+// Example questions built from the notes on this device, so each one has something to answer
+// from: "C-14 Operating Pressure Baseline" -> "What's the C-14 operating pressure baseline?"
+export function exampleQuestions(
+  notes: { title?: string; asset_tag?: string; category?: string }[],
+  n = 3
+): string[] {
+  // Shared notes first: they're the ones "Team only" can answer from too
+  const ordered = [...notes].sort((a, b) => Number(b.category === "shareable") - Number(a.category === "shareable"));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const m of ordered) {
+    const title = (m.title || "").replace(/:/g, "").trim().replace(/[.?!]+$/, "");
+    const tag = (m.asset_tag || "").trim();
+    const q = title
+      ? `What's the ${title
+          .split(/\s+/)
+          // Keep equipment tags and acronyms (SOP, PPE) as written
+          .map((w) => (TAG.test(w) || /^[A-Z0-9][A-Z0-9-]+$/.test(w) ? w : w.toLowerCase()))
+          .join(" ")}?`
+      : tag
+      ? `What do my notes say about ${tag}?`
+      : "";
+    if (!q || seen.has(q)) continue;
+    seen.add(q);
+    out.push(q);
+    if (out.length === n) break;
+  }
+  return out;
 }
 
 export function greeting() {

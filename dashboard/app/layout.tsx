@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Providers from "@/components/Providers";
-import { Navbar } from "@/components/Navbar";
+import { AppShell } from "@/components/Navbar";
 
 // Self-hosted at build time, so the UI keeps its font when the device is offline
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans", display: "swap" });
@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#fafafa" },
-    { media: "(prefers-color-scheme: dark)", color: "#09090b" },
+    { media: "(prefers-color-scheme: light)", color: "#f6f7f9" },
+    { media: "(prefers-color-scheme: dark)", color: "#0a0b0f" },
   ],
 };
 
@@ -34,12 +34,7 @@ export default function RootLayout({
       </head>
       <body>
         <Providers>
-          <div className="min-h-screen flex flex-col">
-            <Navbar />
-            <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 pt-8 sm:pt-10 pb-28 md:pb-16">
-              {children}
-            </main>
-          </div>
+          <AppShell>{children}</AppShell>
         </Providers>
       </body>
     </html>
