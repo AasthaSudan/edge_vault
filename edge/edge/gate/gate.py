@@ -113,7 +113,7 @@ def decide_v2(text: str, dense: list[float], memory_id: str | None = None) -> Ga
             out = llm.chat_json(prompts.messages(text, nbrs, corr), prompts.SCHEMA, num_predict=90)
             if out.get("category") not in ("shareable", "private", "routine"):
                 raise ValueError("bad category")
-            cat, reason, flags = policy.apply(out, nbrs, corr)
+            cat, reason, flags = policy.apply(out, nbrs, corr, text=text)
             return GateDecision(
                 category=cat,
                 source="llm",
