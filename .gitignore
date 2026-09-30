@@ -18,6 +18,7 @@ dashboard/node_modules/
 dashboard/.next/
 dashboard/.next-b/
 dashboard/out/
+*.tsbuildinfo
 .next/
 out/
 *.log

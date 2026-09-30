@@ -1,28 +1,28 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchEdge } from "@/lib/api";
-import { askStream, Source, AskEvent } from "@/lib/stream";
-import { CitationChip } from "@/components/CitationChip";
 import {
-  Bot,
-  Send,
+  ArrowUp,
   Plus,
   Trash2,
-  Cpu,
-  ShieldCheck,
-  ShieldAlert,
-  Save,
-  Clock,
-  Sparkles,
-  ChevronDown,
-  ChevronRight,
-  ExternalLink,
-  Layers,
+  Copy,
+  Check,
+  BookmarkPlus,
+  AlertTriangle,
   X,
-  User,
+  ArrowRight,
+  BadgeCheck,
+  History,
+  MessageSquare,
 } from "lucide-react";
+import { fetchEdge, EDGE_API } from "@/lib/api";
+import { askStream, Source } from "@/lib/stream";
+import { category, errorDetail, timeAgo } from "@/lib/format";
+import { CitationChip } from "@/components/CitationChip";
+import { useToast } from "@/components/Providers";
+import { CategoryLabel, Segmented, cn } from "@/components/ui";
 
 interface Message {
   id?: string;
@@ -30,604 +30,519 @@ interface Message {
   content: string;
   sources?: Source[];
   cited_ns?: number[];
-  cited?: string[];
   grounded?: boolean;
-  latency?: {
-    retrieve?: number;
-    first_token?: number | null;
-    total?: number;
-  };
-  savedAs?: {
-    category: string;
-    reason: string;
-  };
+  error?: boolean;
+  savedAs?: { category: string; reason: string };
 }
 
-export default function AssistantPage() {
+type Scope = "device" | "fleet";
+
+const EXAMPLES = [
+  "How did we fix the turbine 4 bearing overheat?",
+  "What is the torque spec for panel B bus bars?",
+  "What fixed the P-200 seal leak?",
+];
+
+export default function AskPage() {
   const qc = useQueryClient();
-  const [scope, setScope] = useState<"device" | "fleet">("device");
+  const toast = useToast();
+  const [scope, setScope] = useState<Scope>("device");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [expandedSources, setExpandedSources] = useState<Record<number, boolean>>({});
-  const [inspectSource, setInspectSource] = useState<Source | null>(null);
+  const [inspect, setInspect] = useState<Source | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const started = useRef(false);
 
-  // Fetch LLM status for top banner
-  const { data: llmStatus } = useQuery({
-    queryKey: ["llm-status"],
-    queryFn: () => fetchEdge("/llm/status"),
-    refetchInterval: 5000,
-  });
-
-  // Fetch chat sessions
   const { data: sessions, refetch: refetchSessions } = useQuery({
     queryKey: ["assistant-sessions"],
     queryFn: () => fetchEdge("/assistant/sessions"),
   });
 
-  // Auto scroll
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isStreaming]);
+    endRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
 
-  // Handle new chat
-  const handleNewChat = () => {
+  // Grow the composer with its content
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`;
+  }, [input]);
+
+  // A question typed on the Home page arrives as ?q=
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    const q = new URLSearchParams(window.location.search).get("q");
+    if (q) {
+      window.history.replaceState(null, "", "/assistant");
+      handleSubmit(undefined, q);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const newChat = () => {
     setSessionId(null);
     setMessages([]);
     setInput("");
+    setHistoryOpen(false);
+    textareaRef.current?.focus();
   };
 
-  // Delete chat session
-  const deleteSessionMutation = useMutation({
+  const openSession = async (sid: string) => {
+    setHistoryOpen(false);
+    if (sid === sessionId || isStreaming) return;
+    try {
+      const d = await fetchEdge(`/assistant/sessions/${sid}`);
+      setSessionId(sid);
+      if (d.session?.scope === "fleet" || d.session?.scope === "device") setScope(d.session.scope);
+      setMessages(
+        (d.messages ?? []).map((m: any): Message => {
+          const sources: Source[] = m.sources ?? [];
+          const cited: string[] = m.cited ?? [];
+          const isAssistant = m.role === "assistant";
+          return {
+            id: isAssistant ? m.id : undefined,
+            role: m.role,
+            content: m.content,
+            sources,
+            cited_ns: sources.filter((s) => cited.includes(s.memory_id)).map((s) => s.n),
+            // Mirrors the edge's rule: grounded when something was cited, or when it declined
+            grounded: isAssistant ? cited.length > 0 || m.content.startsWith("I don't have") : undefined,
+          };
+        })
+      );
+    } catch (err) {
+      toast(`Couldn't open that chat: ${errorDetail(err)}`, "error");
+    }
+  };
+
+  const deleteSession = useMutation({
     mutationFn: (sid: string) => fetchEdge(`/assistant/sessions/${sid}`, { method: "DELETE" }),
     onSuccess: (_, sid) => {
       refetchSessions();
-      if (sessionId === sid) {
-        handleNewChat();
-      }
+      if (sessionId === sid) newChat();
     },
   });
 
-  // Save message as memory with taint rule
   const saveMutation = useMutation({
     mutationFn: ({ messageId }: { messageId: string; index: number }) =>
       fetchEdge(`/assistant/messages/${messageId}/save`, { method: "POST" }),
-    onSuccess: (data, variables) => {
+    onSuccess: (data, { index }) => {
       qc.invalidateQueries({ queryKey: ["memories"] });
       qc.invalidateQueries({ queryKey: ["local-stats"] });
-      setMessages((prev) => {
-        const next = [...prev];
-        if (next[variables.index]) {
-          next[variables.index] = {
-            ...next[variables.index],
-            savedAs: {
-              category: data.category,
-              reason: data.gate_reason || data.reason || "Saved as memory",
-            },
-          };
-        }
-        return next;
-      });
+      const savedAs = { category: data.category, reason: data.gate_reason || data.reason || "" };
+      setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, savedAs } : m)));
+      toast(`Saved as a ${category(data.category).label.toLowerCase()} note`);
     },
+    onError: (err) => toast(`Couldn't save: ${errorDetail(err)}`, "error"),
   });
 
-  // Send question
-  const handleSubmit = async (e?: React.FormEvent, customQuestion?: string) => {
+  const handleSubmit = async (e?: React.FormEvent, custom?: string) => {
     if (e) e.preventDefault();
-    const q = (customQuestion || input).trim();
+    const q = (custom ?? input).trim();
     if (!q || isStreaming) return;
 
     setInput("");
-    const userMsg: Message = { role: "user", content: q };
     const assistantIndex = messages.length + 1;
-    const initialAssistantMsg: Message = { role: "assistant", content: "", sources: [] };
+    const patch = (p: Partial<Message>) =>
+      setMessages((prev) => prev.map((m, i) => (i === assistantIndex ? { ...m, ...p } : m)));
 
-    setMessages((prev) => [...prev, userMsg, initialAssistantMsg]);
+    setMessages((prev) => [...prev, { role: "user", content: q }, { role: "assistant", content: "", sources: [] }]);
     setIsStreaming(true);
 
-    const edgeUrl = process.env.NEXT_PUBLIC_EDGE_API || "http://localhost:7001";
-
     try {
-      let accumulatedText = "";
-      let currentSources: Source[] = [];
-      let currentSessionId = sessionId;
-
-      for await (const ev of askStream(edgeUrl, {
-        question: q,
-        session_id: currentSessionId || undefined,
-        scope,
-      })) {
+      let text = "";
+      let sources: Source[] = [];
+      for await (const ev of askStream(EDGE_API, { question: q, session_id: sessionId || undefined, scope })) {
         if (ev.type === "sources") {
-          currentSources = ev.sources;
-          currentSessionId = ev.session_id;
+          sources = ev.sources;
           setSessionId(ev.session_id);
           refetchSessions();
-
-          setMessages((prev) => {
-            const next = [...prev];
-            if (next[assistantIndex]) {
-              next[assistantIndex] = {
-                ...next[assistantIndex],
-                sources: currentSources,
-              };
-            }
-            return next;
-          });
+          patch({ sources });
         } else if (ev.type === "token") {
-          accumulatedText += ev.text;
-          setMessages((prev) => {
-            const next = [...prev];
-            if (next[assistantIndex]) {
-              next[assistantIndex] = {
-                ...next[assistantIndex],
-                content: accumulatedText,
-              };
-            }
-            return next;
-          });
+          text += ev.text;
+          patch({ content: text });
         } else if (ev.type === "done") {
-          setMessages((prev) => {
-            const next = [...prev];
-            if (next[assistantIndex]) {
-              next[assistantIndex] = {
-                ...next[assistantIndex],
-                id: ev.message_id,
-                content: ev.text ?? accumulatedText,
-                sources: currentSources,
-                cited_ns: ev.cited_ns,
-                cited: ev.cited,
-                grounded: ev.grounded,
-                latency: ev.latency_ms,
-              };
-            }
-            return next;
+          patch({
+            id: ev.message_id,
+            content: ev.text ?? text,
+            sources,
+            cited_ns: ev.cited_ns,
+            grounded: ev.grounded,
           });
         }
       }
     } catch (err: any) {
-      setMessages((prev) => {
-        const next = [...prev];
-        if (next[assistantIndex]) {
-          next[assistantIndex] = {
-            ...next[assistantIndex],
-            content: `Error: ${err.message || "Failed to query on-device assistant."}`,
-          };
-        }
-        return next;
-      });
+      patch({ content: err?.message || "The on-device assistant didn't respond.", error: true });
     } finally {
       setIsStreaming(false);
     }
   };
 
-  // Render assistant message content with clickable citation chips
-  const renderFormattedText = (text: string, sources: Source[] = []) => {
-    if (!text) return null;
-    const parts = text.split(/(\[\d{1,2}\])/g);
-
-    return parts.map((part, i) => {
+  const renderText = (text: string, sources: Source[] = []) =>
+    text.split(/(\[\d{1,2}\])/g).map((part, i) => {
       const match = part.match(/^\[(\d{1,2})\]$/);
-      if (match) {
-        const n = parseInt(match[1], 10);
-        const source = sources.find((s) => s.n === n);
-        return (
-          <CitationChip
-            key={i}
-            n={n}
-            source={source}
-            onClick={(src) => setInspectSource(src || null)}
-          />
-        );
-      }
-      return <span key={i}>{part}</span>;
+      if (!match) return <span key={i}>{part}</span>;
+      const n = parseInt(match[1], 10);
+      return <CitationChip key={i} n={n} source={sources.find((s) => s.n === n)} onClick={setInspect} />;
     });
-  };
+
+  const sessionList = (
+    <ul className="space-y-0.5">
+      {Array.isArray(sessions) && sessions.length > 0 ? (
+        sessions.map((s: any) => (
+          <li key={s.id}>
+            <div
+              className={cn(
+                "group flex items-center gap-1 rounded-lg pr-1 transition-colors",
+                s.id === sessionId ? "bg-subtle" : "hover:bg-subtle"
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => openSession(s.id)}
+                className="flex-1 min-w-0 text-left px-2.5 py-2"
+              >
+                <span className={cn("block text-sm truncate", s.id === sessionId ? "text-fg font-medium" : "text-muted")}>
+                  {s.title || "Untitled chat"}
+                </span>
+                <span className="block text-xs text-faint mt-0.5">{timeAgo(s.updated_at)}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => deleteSession.mutate(s.id)}
+                className="btn-icon w-7 h-7 opacity-0 group-hover:opacity-100 focus:opacity-100 hover:text-danger"
+                aria-label="Delete chat"
+                title="Delete chat"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </li>
+        ))
+      ) : (
+        <li className="px-2.5 py-2 text-sm text-faint">No chats yet</li>
+      )}
+    </ul>
+  );
 
   return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-8rem)] gap-4 max-w-6xl mx-auto">
-      {/* Sessions Sidebar */}
-      <div className="lg:w-64 flex flex-col panel p-3 shrink-0">
-        <button
-          onClick={handleNewChat}
-          className="flex items-center justify-center gap-2 w-full py-2 px-3 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs transition-colors shadow-xs mb-3 cursor-pointer"
-        >
-          <Plus className="w-3.5 h-3.5" />
-          <span>New Chat</span>
+    <div className="flex -mt-8 sm:-mt-10 -mb-28 md:-mb-16 h-[calc(100dvh-7.5rem)] md:h-[calc(100dvh-3.5rem)]">
+      {/* Chat history */}
+      <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-line pr-4 py-6">
+        <button onClick={newChat} className="btn btn-secondary w-full">
+          <Plus className="w-4 h-4" />
+          New chat
         </button>
+        <div className="text-xs font-medium text-faint mt-6 mb-2 px-2.5">Recent</div>
+        <div className="flex-1 overflow-y-auto -mr-2 pr-2">{sessionList}</div>
+      </aside>
 
-        <div className="text-[11px] font-mono text-slate-500 px-2 py-1 uppercase flex items-center justify-between">
-          <span>Sessions</span>
-          <span>{sessions?.length || 0}</span>
-        </div>
-
-        <div className="flex-1 overflow-y-auto space-y-1 mt-1 pr-1">
-          {sessions && sessions.length > 0 ? (
-            sessions.map((s: any) => {
-              const active = s.id === sessionId;
-              return (
-                <div
-                  key={s.id}
-                  onClick={() => setSessionId(s.id)}
-                  className={`group flex items-center justify-between p-2 rounded-lg text-xs cursor-pointer transition-colors ${
-                    active
-                      ? "bg-slate-800 text-white font-medium"
-                      : "text-slate-400 hover:bg-slate-800/50 hover:text-slate-200"
-                  }`}
-                >
-                  <div className="truncate flex-1 pr-2">
-                    <div className="truncate font-sans text-xs">{s.title || "Untitled Chat"}</div>
-                    <div className="text-[10px] font-mono text-slate-500 mt-0.5 uppercase">
-                      {s.scope}
-                    </div>
-                  </div>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteSessionMutation.mutate(s.id);
-                    }}
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-rose-950/40 text-slate-500 hover:text-rose-400 transition-colors"
-                    title="Delete session"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
-                </div>
-              );
-            })
-          ) : (
-            <div className="p-4 text-center text-xs text-slate-500 italic">
-              No previous chats yet.
-            </div>
-          )}
-        </div>
-
-        <div className="pt-2 border-t border-border text-[11px] text-slate-500 flex items-center gap-1.5">
-          <ShieldCheck className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-          <span>Local SQLite only. Never exported.</span>
-        </div>
-      </div>
-
-      {/* Main Chat Area */}
-      <div className="flex-1 flex flex-col panel overflow-hidden">
-        {/* Banner & Controls */}
-        <div className="px-4 py-2.5 border-b border-border flex flex-wrap items-center justify-between gap-3 bg-slate-900/60">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span className="text-xs text-slate-300 font-mono">
-              On-Device Assistant ({llmStatus?.model || "qwen2.5:1.5b"})
-            </span>
-          </div>
-
-          {/* Scope switch */}
-          <div className="flex items-center gap-1 bg-slate-900 border border-slate-800 p-0.5 rounded-lg text-xs font-mono">
-            <button
-              onClick={() => setScope("device")}
-              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                scope === "device"
-                  ? "bg-slate-800 text-white font-medium"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              This Device (Private + Fleet)
-            </button>
-            <button
-              onClick={() => setScope("fleet")}
-              className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
-                scope === "fleet"
-                  ? "bg-slate-800 text-white font-medium"
-                  : "text-slate-400 hover:text-slate-200"
-              }`}
-            >
-              Fleet Only
-            </button>
-          </div>
-        </div>
-
-        {/* Message Feed */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
-          {messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center max-w-md mx-auto space-y-4 py-6">
-              <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400">
-                <Bot className="w-5 h-5" />
-              </div>
-
-              <div>
-                <h3 className="text-sm font-semibold text-white">Ask EdgeVault</h3>
-                <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-                  Query local private records and synchronized fleet intelligence with verified numbered citations.
-                </p>
-              </div>
-
-              {/* Sample Prompts */}
-              <div className="w-full space-y-1.5 text-left">
-                <span className="text-[11px] font-mono text-slate-500 uppercase block px-1">
-                  Example Queries
-                </span>
-                <button
-                  onClick={() => handleSubmit(undefined, "What is the Noida gate code and how do I fix a P-200 seal leak?")}
-                  className="w-full text-left p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition-colors flex items-center justify-between group cursor-pointer"
-                >
-                  <span className="font-mono text-[11px]">What is the Noida gate code and how do I fix a P-200 seal leak?</span>
-                  <Sparkles className="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 transition-colors shrink-0" />
-                </button>
-                <button
-                  onClick={() => handleSubmit(undefined, "How did we fix the turbine 4 bearing overheat?")}
-                  className="w-full text-left p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition-colors flex items-center justify-between group cursor-pointer"
-                >
-                  <span className="font-mono text-[11px]">How did we fix the turbine 4 bearing overheat?</span>
-                  <Sparkles className="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 transition-colors shrink-0" />
-                </button>
-                <button
-                  onClick={() => handleSubmit(undefined, "What is the torque spec for panel B bus bars?")}
-                  className="w-full text-left p-2.5 rounded-lg border border-slate-800 bg-slate-900/60 hover:bg-slate-800 text-xs text-slate-300 hover:text-white transition-colors flex items-center justify-between group cursor-pointer"
-                >
-                  <span className="font-mono text-[11px]">What is the torque spec for panel B bus bars?</span>
-                  <Sparkles className="w-3.5 h-3.5 text-slate-500 group-hover:text-sky-400 transition-colors shrink-0" />
-                </button>
-              </div>
-            </div>
-          ) : (
-            messages.map((m, idx) => {
-              const isUser = m.role === "user";
-              const isExpanded = expandedSources[idx] || false;
-
-              return (
-                <div
-                  key={idx}
-                  className={`flex flex-col ${isUser ? "items-end" : "items-start"}`}
-                >
-                  <div className="flex items-start gap-2 max-w-2xl">
-                    {!isUser && (
-                      <div className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 shrink-0 mt-0.5">
-                        <Bot className="w-3.5 h-3.5" />
-                      </div>
-                    )}
-
-                    <div
-                      className={`rounded-xl p-3 text-xs leading-relaxed ${
-                        isUser
-                          ? "bg-slate-800 text-white font-medium rounded-tr-xs"
-                          : "bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-xs shadow-xs"
-                      }`}
-                    >
-                      {isUser ? (
-                        m.content
-                      ) : (
-                        <div className="space-y-2">
-                          <div className="font-sans leading-relaxed text-xs whitespace-pre-wrap text-slate-200">
-                            {renderFormattedText(m.content, m.sources)}
-                          </div>
-
-                          {/* Save feedback alert */}
-                          {m.savedAs && (
-                            <div className="mt-2 p-2 rounded-lg border text-[11px] font-mono flex items-center gap-1.5 bg-rose-950/30 border-rose-800/40 text-rose-300">
-                              <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
-                              <span>
-                                <strong>{m.savedAs.category.toUpperCase()}:</strong> {m.savedAs.reason}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {isUser && (
-                      <div className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-400 shrink-0 mt-0.5">
-                        <User className="w-3.5 h-3.5" />
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Assistant Footer & Sources Accordion */}
-                  {!isUser && (
-                    <div className="max-w-2xl w-full ml-9 mt-1.5 space-y-1.5 text-xs">
-                      {/* Telemetry and Controls Bar */}
-                      <div className="flex flex-wrap items-center justify-between gap-2 px-1 text-slate-400">
-                        <div className="flex items-center gap-2 text-[10px] font-mono">
-                          {m.latency && (
-                            <span>
-                              retrieve {m.latency.retrieve || 0}ms · total {m.latency.total || 0}ms
-                            </span>
-                          )}
-                          {m.grounded === false && (
-                            <span className="text-amber-400 font-medium">
-                              (Ungrounded)
-                            </span>
-                          )}
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          {/* Save as memory button */}
-                          {m.id && !m.savedAs && (
-                            <button
-                              onClick={() => saveMutation.mutate({ messageId: m.id!, index: idx })}
-                              disabled={saveMutation.isPending}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-mono border border-slate-700 transition-colors cursor-pointer"
-                              title="Store this answer as an on-device memory with taint propagation"
-                            >
-                              <Save className="w-3 h-3 text-sky-400" />
-                              <span>Save as memory</span>
-                            </button>
-                          )}
-
-                          {/* Sources toggle */}
-                          {m.sources && m.sources.length > 0 && (
-                            <button
-                              onClick={() =>
-                                setExpandedSources((prev) => ({ ...prev, [idx]: !isExpanded }))
-                              }
-                              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono text-slate-400 hover:text-slate-200 transition-colors cursor-pointer"
-                            >
-                              <Layers className="w-3 h-3" />
-                              <span>{m.sources.length} sources</span>
-                              {isExpanded ? (
-                                <ChevronDown className="w-3 h-3" />
-                              ) : (
-                                <ChevronRight className="w-3 h-3" />
-                              )}
-                            </button>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Expandable Sources Drawer */}
-                      {isExpanded && m.sources && m.sources.length > 0 && (
-                        <div className="p-3 rounded-lg border border-slate-800 bg-slate-900/90 space-y-1.5">
-                          <div className="text-[10px] font-mono uppercase text-slate-500 font-semibold">
-                            Retrieved Context Sources:
-                          </div>
-                          <div className="space-y-1">
-                            {m.sources.map((s) => {
-                              const isCited = m.cited_ns?.includes(s.n);
-                              return (
-                                <div
-                                  key={s.n}
-                                  onClick={() => setInspectSource(s)}
-                                  className={`flex items-start justify-between gap-2 p-1.5 rounded border text-xs cursor-pointer transition-colors ${
-                                    isCited
-                                      ? "border-sky-800/60 bg-sky-950/20 text-slate-200"
-                                      : "border-slate-800/60 text-slate-400 opacity-70 hover:opacity-100"
-                                  }`}
-                                >
-                                  <div className="flex items-center gap-1.5">
-                                    <span className="font-mono text-xs font-semibold text-sky-400">
-                                      [{s.n}]
-                                    </span>
-                                    <span className="font-medium truncate max-w-sm">
-                                      {s.title || "Untitled Note"}
-                                    </span>
-                                    {s.asset_tag && (
-                                      <span className="font-mono text-[9px] px-1 rounded bg-slate-800 text-slate-400 border border-slate-700">
-                                        {s.asset_tag}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    <span
-                                      className={`text-[9px] font-mono px-1 py-0.2 rounded uppercase border ${
-                                        s.category === "private"
-                                          ? "bg-rose-950/40 border-rose-800/40 text-rose-300"
-                                          : s.category === "routine"
-                                          ? "bg-slate-800/40 border-slate-700/40 text-slate-400"
-                                          : "bg-sky-950/40 border-sky-800/40 text-sky-300"
-                                      }`}
-                                    >
-                                      {s.category}
-                                    </span>
-                                    <span className="text-[10px] font-mono text-slate-500">
-                                      {s.origin}
-                                    </span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input Bar */}
-        <form onSubmit={handleSubmit} className="p-3 border-t border-border bg-slate-900/60 flex gap-2">
-          <textarea
-            ref={textareaRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                handleSubmit();
-              }
-            }}
-            placeholder={
-              scope === "device"
-                ? "Ask about device memory (e.g. Noida gate code, turbine overheating, torque specs)..."
-                : "Ask about fleet knowledge (shared shard only)..."
-            }
-            rows={1}
-            disabled={isStreaming}
-            className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-slate-600 resize-none transition-colors"
-          />
-          <button
-            type="submit"
-            disabled={isStreaming || !input.trim()}
-            className="px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium disabled:opacity-40 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-          >
-            <Send className="w-3.5 h-3.5" />
-            <span>Send</span>
+      <section className="flex-1 min-w-0 flex flex-col lg:pl-6">
+        {/* Mobile / tablet chat controls */}
+        <div className="lg:hidden relative flex items-center justify-between pt-4">
+          <button onClick={() => setHistoryOpen((o) => !o)} className="btn btn-ghost btn-sm -ml-2">
+            <History className="w-4 h-4" />
+            Chats
           </button>
-        </form>
+          <button onClick={newChat} className="btn btn-ghost btn-sm -mr-2">
+            <Plus className="w-4 h-4" />
+            New chat
+          </button>
+          {historyOpen && (
+            <div className="absolute left-0 right-0 top-14 z-30 card shadow-pop p-1.5 max-h-[60vh] overflow-y-auto animate-fade-in">
+              {sessionList}
+            </div>
+          )}
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          <div className="max-w-2xl mx-auto py-8 space-y-8">
+            {messages.length === 0 ? (
+              <div className="pt-[8vh] text-center">
+                <div className="mx-auto w-11 h-11 rounded-full bg-subtle flex items-center justify-center mb-5">
+                  <MessageSquare className="w-5 h-5 text-muted" />
+                </div>
+                <h1 className="text-2xl font-semibold tracking-tight">What do you need to know?</h1>
+                <p className="mt-2 text-muted text-sm max-w-md mx-auto">
+                  Answers come from your notes and your team&apos;s knowledge, with sources you can check.
+                </p>
+                <div className="mt-8 grid gap-2 max-w-md mx-auto text-left">
+                  {EXAMPLES.map((q) => (
+                    <button
+                      key={q}
+                      onClick={() => handleSubmit(undefined, q)}
+                      className="group flex items-center justify-between gap-3 card px-4 py-3 text-left text-sm text-muted hover:text-fg hover:border-line-strong transition-colors"
+                    >
+                      {q}
+                      <ArrowRight className="w-4 h-4 text-faint group-hover:text-fg shrink-0 transition-colors" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              messages.map((m, idx) =>
+                m.role === "user" ? (
+                  <div key={idx} className="flex justify-end animate-fade-in">
+                    <div className="max-w-[85%] rounded-2xl rounded-br-md bg-subtle px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap">
+                      {m.content}
+                    </div>
+                  </div>
+                ) : (
+                  <AssistantMessage
+                    key={idx}
+                    m={m}
+                    streaming={isStreaming && idx === messages.length - 1}
+                    renderText={renderText}
+                    onInspect={setInspect}
+                    onSave={() => m.id && saveMutation.mutate({ messageId: m.id, index: idx })}
+                    saving={saveMutation.isPending && saveMutation.variables?.index === idx}
+                  />
+                )
+              )
+            )}
+            <div ref={endRef} />
+          </div>
+        </div>
+
+        {/* Composer */}
+        <div className="pb-4 md:pb-6">
+          <form
+            onSubmit={handleSubmit}
+            className="max-w-2xl mx-auto card rounded-2xl p-2 shadow-sm focus-within:border-line-strong transition-colors"
+          >
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit();
+                }
+              }}
+              placeholder={scope === "device" ? "Ask about your notes…" : "Ask about your team's shared knowledge…"}
+              rows={1}
+              className="w-full bg-transparent resize-none outline-none px-2.5 pt-2 pb-1 text-[15px] placeholder:text-faint"
+            />
+            <div className="flex items-center justify-between gap-2 pl-1">
+              <Segmented<Scope>
+                size="sm"
+                value={scope}
+                onChange={setScope}
+                options={[
+                  { value: "device", label: "All my notes" },
+                  { value: "fleet", label: "Team only" },
+                ]}
+              />
+              <button
+                type="submit"
+                disabled={isStreaming || !input.trim()}
+                aria-label="Send"
+                className="w-8 h-8 rounded-lg bg-fg text-bg flex items-center justify-center disabled:opacity-30 transition-opacity"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </button>
+            </div>
+          </form>
+          <p className="text-center text-xs text-faint mt-2">
+            Runs entirely on this device. Check the sources before acting on an answer.
+          </p>
+        </div>
+      </section>
+
+      {inspect && <SourceDialog source={inspect} onClose={() => setInspect(null)} />}
+    </div>
+  );
+}
+
+function AssistantMessage({
+  m,
+  streaming,
+  renderText,
+  onInspect,
+  onSave,
+  saving,
+}: {
+  m: Message;
+  streaming: boolean;
+  renderText: (t: string, s?: Source[]) => React.ReactNode;
+  onInspect: (s: Source) => void;
+  onSave: () => void;
+  saving: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const sources = m.sources ?? [];
+  const cited = sources.filter((s) => m.cited_ns?.includes(s.n));
+  const shown = showAll ? sources : cited;
+  const done = !!m.id;
+
+  if (m.error) {
+    return (
+      <div className="flex items-start gap-2.5 text-sm text-danger animate-fade-in">
+        <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+        <span>{m.content}</span>
+      </div>
+    );
+  }
+
+  if (!m.content) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted animate-fade-in">
+        <span className="flex gap-1">
+          {[0, 1, 2].map((i) => (
+            <span
+              key={i}
+              className="w-1.5 h-1.5 rounded-full bg-muted animate-blink"
+              style={{ animationDelay: `${i * 0.15}s` }}
+            />
+          ))}
+        </span>
+        {sources.length ? "Writing an answer…" : "Searching your notes…"}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3 animate-fade-in">
+      <div className="text-[15px] leading-7 whitespace-pre-wrap">
+        {renderText(m.content, sources)}
+        {streaming && <span className="inline-block w-1.5 h-4 ml-0.5 bg-fg/60 align-[-2px] animate-pulse" />}
       </div>
 
-      {/* Source Detail Modal */}
-      {inspectSource && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl shadow-xl w-full max-w-lg p-5 space-y-3">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-semibold text-sky-400">
-                  Source [{inspectSource.n}]
-                </span>
-                <span
-                  className={`text-[10px] font-mono uppercase px-1.5 py-0.2 rounded border ${
-                    inspectSource.category === "private"
-                      ? "bg-rose-950/40 border-rose-800/40 text-rose-300"
-                      : inspectSource.category === "routine"
-                      ? "bg-slate-800/40 border-slate-700/40 text-slate-400"
-                      : "bg-sky-950/40 border-sky-800/40 text-sky-300"
-                  }`}
-                >
-                  {inspectSource.category}
-                </span>
-              </div>
-              <button
-                onClick={() => setInspectSource(null)}
-                className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {done && m.grounded === false && (
+        <p className="flex items-center gap-1.5 text-xs text-warn">
+          <AlertTriangle className="w-3.5 h-3.5" />
+          Not backed by any of your notes. Treat with care.
+        </p>
+      )}
 
-            <div className="space-y-1.5">
-              <div className="text-sm font-semibold text-white">
-                {inspectSource.title || "Untitled Note"}
-              </div>
-              <div className="text-xs font-mono text-slate-400 flex items-center gap-3">
-                {inspectSource.asset_tag && (
-                  <span>Asset: <strong>{inspectSource.asset_tag}</strong></span>
-                )}
-                <span>Origin: {inspectSource.origin}</span>
-              </div>
-            </div>
-
-            <div className="pt-2 border-t border-slate-800 flex justify-end gap-2">
-              <a
-                href={`/memories?id=${inspectSource.memory_id}`}
-                className="px-3 py-1.5 rounded-lg border border-slate-700 hover:bg-slate-800 text-xs font-mono text-slate-300 flex items-center gap-1.5 transition-colors"
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                <span>View Note</span>
-              </a>
-              <button
-                onClick={() => setInspectSource(null)}
-                className="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors cursor-pointer"
-              >
-                Close
-              </button>
-            </div>
-          </div>
+      {done && sources.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          {shown.map((s) => (
+            <button
+              key={s.n}
+              onClick={() => onInspect(s)}
+              className="inline-flex items-center gap-1.5 h-7 pl-1.5 pr-2.5 max-w-[260px] rounded-lg border border-line bg-surface text-xs text-muted hover:text-fg hover:bg-subtle transition-colors"
+            >
+              <span className={cn("w-4 h-4 rounded text-[10px] font-semibold flex items-center justify-center bg-subtle", category(s.category).text)}>
+                {s.n}
+              </span>
+              <span className="truncate">{s.title || s.asset_tag || "Untitled note"}</span>
+            </button>
+          ))}
+          {sources.length > cited.length && (
+            <button onClick={() => setShowAll((v) => !v)} className="h-7 px-2 text-xs text-faint hover:text-fg transition-colors">
+              {showAll
+                ? "Show fewer"
+                : cited.length
+                ? `+${sources.length - cited.length} more`
+                : `${sources.length} related notes`}
+            </button>
+          )}
         </div>
       )}
+
+      {done && (
+        <div className="flex items-center gap-1 -ml-2">
+          <button
+            onClick={() => {
+              navigator.clipboard?.writeText(m.content.replace(/\s?\[\d{1,2}\]/g, ""));
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }}
+            className="btn btn-ghost h-7 px-2 text-xs"
+          >
+            {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+            {copied ? "Copied" : "Copy"}
+          </button>
+          {m.savedAs ? (
+            <span className="inline-flex items-center gap-1.5 h-7 px-2 text-xs text-muted">
+              <Check className="w-3.5 h-3.5 text-ok" />
+              Saved as <CategoryLabel value={m.savedAs.category} />
+            </span>
+          ) : (
+            <button
+              onClick={onSave}
+              disabled={saving}
+              className="btn btn-ghost h-7 px-2 text-xs"
+              title="Keep this answer as a note. It stays private if any source was private."
+            >
+              <BookmarkPlus className="w-3.5 h-3.5" />
+              {saving ? "Saving…" : "Save as note"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SourceDialog({ source, onClose }: { source: Source; onClose: () => void }) {
+  useEffect(() => {
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    document.addEventListener("keydown", esc);
+    return () => document.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const fromHere = !source.origin || source.origin === "this device";
+  const verifiedBy = source.corroborated_by?.length ?? 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 backdrop-blur-[2px] p-0 sm:p-4"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        onClick={(e) => e.stopPropagation()}
+        className="card w-full sm:max-w-lg rounded-b-none sm:rounded-xl shadow-pop p-6 animate-fade-in"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-xs text-faint mb-1">Source {source.n}</div>
+            <h2 className="text-base font-semibold leading-snug">{source.title || "Untitled note"}</h2>
+          </div>
+          <button onClick={onClose} className="btn-icon -mr-2 -mt-1" aria-label="Close">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-3">
+          <CategoryLabel value={source.category} />
+          {source.asset_tag && <span className="tag">{source.asset_tag}</span>}
+          <span className="text-xs text-muted">{fromHere ? "From this device" : `From ${source.origin}`}</span>
+          {source.fleet_verified && (
+            <span className="inline-flex items-center gap-1 text-xs text-ok">
+              <BadgeCheck className="w-3.5 h-3.5" />
+              Confirmed by {verifiedBy} devices
+            </span>
+          )}
+        </div>
+
+        {source.text && (
+          <p className="mt-4 text-sm leading-relaxed text-fg/90 bg-subtle rounded-lg p-4">{source.text}</p>
+        )}
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button onClick={onClose} className="btn btn-ghost">
+            Close
+          </button>
+          <Link href={`/memories?id=${source.memory_id}`} className="btn btn-secondary">
+            Open note
+            <ArrowRight className="w-4 h-4" />
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }

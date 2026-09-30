@@ -2,292 +2,204 @@
 
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { Eye, EyeOff, Check, AlertTriangle, CheckCircle2, Lock, Users, ArrowDown } from "lucide-react";
 import { fetchEdge } from "@/lib/api";
-import {
-  Split,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  XCircle,
-  Share2,
-  Lock,
-  RefreshCw,
-} from "lucide-react";
+import { errorDetail, timeAgo } from "@/lib/format";
+import { useToast } from "@/components/Providers";
+import { ReviewHeader } from "@/components/ReviewTabs";
+import { EmptyState, Segmented, Skeleton, cn } from "@/components/ui";
+
+type View = "pending" | "history";
 
 export default function SuggestionsPage() {
   const qc = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState<string>("pending");
+  const toast = useToast();
+  const [view, setView] = useState<View>("pending");
   const [revealed, setRevealed] = useState<Record<string, boolean>>({});
-  const [editedText, setEditedText] = useState<Record<string, string>>({});
+  const [edited, setEdited] = useState<Record<string, string>>({});
 
-  const { data: suggestions, isLoading, refetch } = useQuery({
-    queryKey: ["suggestions", statusFilter],
-    queryFn: () => {
-      const q = statusFilter === "all" ? "/suggestions?status=" : `/suggestions?status=${statusFilter}`;
-      return fetchEdge(q);
-    },
+  const { data, isLoading } = useQuery({
+    queryKey: ["suggestions", view],
+    // An empty status returns every suggestion; history is everything already decided
+    queryFn: () => fetchEdge(view === "pending" ? "/suggestions?status=pending" : "/suggestions?status="),
     refetchInterval: 3000,
   });
+  const items: any[] = (Array.isArray(data) ? data : []).filter((s) =>
+    view === "pending" ? s.status === "pending" : s.status !== "pending"
+  );
 
-  const approveMutation = useMutation({
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["suggestions"] });
+    qc.invalidateQueries({ queryKey: ["pending-suggestions"] });
+    qc.invalidateQueries({ queryKey: ["memories"] });
+    qc.invalidateQueries({ queryKey: ["local-stats"] });
+    qc.invalidateQueries({ queryKey: ["sync-status"] });
+  };
+
+  const approve = useMutation({
     mutationFn: ({ id, text }: { id: string; text?: string }) =>
-      fetchEdge(`/suggestions/${id}/approve`, {
-        method: "POST",
-        body: JSON.stringify({ text }),
-      }),
+      fetchEdge(`/suggestions/${id}/approve`, { method: "POST", body: JSON.stringify({ text }) }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suggestions"] });
-      qc.invalidateQueries({ queryKey: ["pending-suggestions"] });
-      qc.invalidateQueries({ queryKey: ["memories"] });
-      qc.invalidateQueries({ queryKey: ["local-stats"] });
-      qc.invalidateQueries({ queryKey: ["sync-status"] });
+      refresh();
+      toast("Shared with your team. Your original note stays private.");
     },
-    // The edge re-checks PII, grounding and numbers on edits and explains a refusal
-    onError: (err: Error) => {
-      let msg = err.message;
-      try {
-        msg = JSON.parse(err.message).detail ?? msg;
-      } catch {}
-      alert(`Not shared: ${msg}`);
-    },
+    // The edge re-checks edited text for private info, grounding and numbers
+    onError: (err) => toast(`Not shared: ${errorDetail(err)}`, "error"),
   });
 
-  const rejectMutation = useMutation({
-    mutationFn: (id: string) =>
-      fetchEdge(`/suggestions/${id}/reject`, { method: "POST" }),
+  const reject = useMutation({
+    mutationFn: (id: string) => fetchEdge(`/suggestions/${id}/reject`, { method: "POST" }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["suggestions"] });
-      qc.invalidateQueries({ queryKey: ["pending-suggestions"] });
-      qc.invalidateQueries({ queryKey: ["memories"] });
+      refresh();
+      toast("Kept private");
     },
+    onError: (err) => toast(errorDetail(err), "error"),
   });
 
-  const toggleReveal = (id: string) => {
-    setRevealed((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const handleTextChange = (id: string, text: string) => {
-    setEditedText((prev) => ({ ...prev, [id]: text }));
-  };
-
-  const handleApprove = (item: any) => {
-    const textToApprove = editedText[item.id] !== undefined ? editedText[item.id] : item.proposed_text;
-    approveMutation.mutate({ id: item.id, text: textToApprove });
-  };
+  const busy = approve.isPending || reject.isPending;
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
-              Split &amp; Share Inbox
-            </h1>
-            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 text-[10px] font-mono">
-              PII Filtered
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1 max-w-xl">
-            Review reusable equipment facts extracted from private notes. Private originals stay on disk; approved facts sync to fleet.
-          </p>
-        </div>
+    <div>
+      <ReviewHeader
+        actions={
+          <Segmented<View>
+            size="sm"
+            value={view}
+            onChange={setView}
+            options={[
+              { value: "pending", label: "To do" },
+              { value: "history", label: "History" },
+            ]}
+          />
+        }
+      />
 
-        {/* Filter Tabs */}
-        <div className="flex items-center gap-0.5 p-0.5 bg-slate-900 border border-slate-800 rounded-lg text-xs font-mono self-start sm:self-auto">
-          <button
-            onClick={() => setStatusFilter("pending")}
-            className={`px-3 py-1 rounded-md transition-colors ${
-              statusFilter === "pending" ? "bg-slate-800 text-white font-medium" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Pending
-          </button>
-          <button
-            onClick={() => setStatusFilter("approved")}
-            className={`px-3 py-1 rounded-md transition-colors ${
-              statusFilter === "approved" ? "bg-slate-800 text-white font-medium" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Approved
-          </button>
-          <button
-            onClick={() => setStatusFilter("rejected")}
-            className={`px-3 py-1 rounded-md transition-colors ${
-              statusFilter === "rejected" ? "bg-slate-800 text-white font-medium" : "text-slate-400 hover:text-slate-200"
-            }`}
-          >
-            Rejected
-          </button>
-          <button
-            onClick={() => refetch()}
-            className="p-1 rounded hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
-            title="Refresh"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-      </div>
+      {view === "pending" && (
+        <p className="text-sm text-muted mb-6 max-w-2xl">
+          When a private note also holds something useful to others, EdgeVault suggests a clean version to share. The
+          original never leaves this device.
+        </p>
+      )}
 
-      {/* Suggestion Cards Feed */}
-      <div className="space-y-4">
-        {isLoading ? (
-          <div className="panel p-12 text-center text-slate-500 text-xs font-mono">
-            Loading proposals…
-          </div>
-        ) : !suggestions || suggestions.length === 0 ? (
-          <div className="panel p-12 text-center space-y-2">
-            <CheckCircle2 className="w-6 h-6 text-emerald-400 mx-auto" />
-            <div className="text-sm font-semibold text-white">No pending proposals</div>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              {statusFilter === "pending"
-                ? "Mixed notes (e.g. gate code + pump fix) will automatically extract reusable facts here for review."
-                : `No ${statusFilter} records.`}
-            </p>
-          </div>
+      {isLoading ? (
+        <Skeleton rows={2} />
+      ) : items.length === 0 ? (
+        view === "pending" ? (
+          <EmptyState icon={CheckCircle2} title="Nothing to review">
+            New suggestions appear here when a private note contains a reusable fix.
+          </EmptyState>
         ) : (
-          suggestions.map((item: any) => {
-            const isRevealed = revealed[item.id] || false;
-            const currentFact = editedText[item.id] !== undefined ? editedText[item.id] : item.proposed_text;
-            const checks = item.checks || {};
-            const isPending = item.status === "pending";
+          <EmptyState icon={CheckCircle2} title="No history yet">
+            Suggestions you share or keep private will show up here.
+          </EmptyState>
+        )
+      ) : view === "history" ? (
+        <ul className="card divide-y divide-line">
+          {items.map((s) => (
+            <li key={s.id} className="flex items-start gap-4 px-5 py-4">
+              <div className="flex-1 min-w-0">
+                <p className="text-sm">{s.proposed_text}</p>
+                <p className="text-xs text-muted mt-1">
+                  {s.asset_tag && <span className="tag mr-2">{s.asset_tag}</span>}
+                  {timeAgo(s.decided_at || s.created_at)}
+                </p>
+              </div>
+              <span
+                className={cn(
+                  "inline-flex items-center gap-1.5 text-xs font-medium shrink-0",
+                  s.status === "approved" ? "text-accent" : "text-muted"
+                )}
+              >
+                {s.status === "approved" ? <Users className="w-3.5 h-3.5" /> : <Lock className="w-3.5 h-3.5" />}
+                {s.status === "approved" ? "Shared" : "Kept private"}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="space-y-4">
+          {items.map((s) => {
+            const text = edited[s.id] ?? s.proposed_text;
+            const checks = s.checks || {};
+            const isRevealed = !!revealed[s.id];
+            const results = [
+              { ok: !(checks.pii?.length > 0), label: "No private info" },
+              // Same bar as GROUNDING_MIN in edge/gate/sanitize.py
+              checks.grounding !== undefined && { ok: checks.grounding >= 0.75, label: "Matches your note" },
+              checks.numbers_preserved !== undefined && {
+                ok: !!checks.numbers_preserved,
+                label: checks.numbers_preserved ? "Numbers unchanged" : "Numbers differ",
+              },
+            ].filter(Boolean) as { ok: boolean; label: string }[];
 
             return (
-              <div
-                key={item.id}
-                className="panel p-4 sm:p-5 space-y-4"
-              >
-                {/* Card Header */}
-                <div className="flex items-center justify-between pb-3 border-b border-slate-800/80">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-semibold text-white font-mono">
-                      Proposal #{item.id.slice(0, 8)}
+              <article key={s.id} className="card p-5 sm:p-6">
+                <div className="flex items-center justify-between gap-3 mb-3">
+                  <div className="flex items-center gap-2 text-xs text-muted min-w-0">
+                    <Lock className="w-3.5 h-3.5 text-private shrink-0" />
+                    <span className="truncate">
+                      From your private note{s.source_title ? ` “${s.source_title}”` : ""}
                     </span>
-                    {item.asset_tag && (
-                      <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 font-mono text-[10px] border border-slate-700">
-                        {item.asset_tag}
-                      </span>
-                    )}
                   </div>
-
-                  <span
-                    className={`text-[10px] font-mono px-2 py-0.5 rounded uppercase font-medium border ${
-                      item.status === "approved"
-                        ? "bg-emerald-950/30 border-emerald-800/40 text-emerald-400"
-                        : item.status === "rejected"
-                        ? "bg-rose-950/30 border-rose-800/40 text-rose-400"
-                        : "bg-amber-950/30 border-amber-800/40 text-amber-400"
-                    }`}
+                  <button
+                    onClick={() => setRevealed((r) => ({ ...r, [s.id]: !isRevealed }))}
+                    className="inline-flex items-center gap-1 text-xs text-muted hover:text-fg shrink-0"
                   >
-                    {item.status}
-                  </span>
+                    {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    {isRevealed ? "Hide" : "Show"} codes
+                  </button>
+                </div>
+                <p className="text-sm text-muted leading-relaxed bg-subtle rounded-lg px-4 py-3">
+                  {isRevealed ? s.source_text : s.masked_text || s.source_text}
+                </p>
+
+                <div className="flex justify-center my-2 text-faint">
+                  <ArrowDown className="w-4 h-4" />
                 </div>
 
-                {/* 2-Column Review */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Left: Private Original */}
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2 flex flex-col justify-between">
-                    <div className="space-y-1.5">
-                      <div className="flex items-center justify-between text-xs text-rose-400 font-mono">
-                        <span className="flex items-center gap-1.5 text-[11px] font-semibold">
-                          <Lock className="w-3 h-3" />
-                          <span>Private Original (Stays Local)</span>
-                        </span>
-                        <button
-                          onClick={() => toggleReveal(item.id)}
-                          className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1 cursor-pointer"
-                        >
-                          {isRevealed ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3 text-slate-400" />}
-                          <span>{isRevealed ? "Mask" : "Reveal"}</span>
-                        </button>
-                      </div>
+                <label htmlFor={`fact-${s.id}`} className="flex items-center gap-2 text-xs text-muted mb-2">
+                  <Users className="w-3.5 h-3.5 text-accent" />
+                  Suggested for your team
+                  {s.asset_tag && <span className="tag">{s.asset_tag}</span>}
+                </label>
+                <textarea
+                  id={`fact-${s.id}`}
+                  value={text}
+                  onChange={(e) => setEdited((d) => ({ ...d, [s.id]: e.target.value }))}
+                  rows={2}
+                  className="input text-[15px]"
+                />
 
-                      <p className="text-xs font-mono text-slate-300 leading-relaxed bg-slate-950 p-2.5 rounded border border-slate-800/80">
-                        {isRevealed ? item.source_text : item.masked_text || item.source_text}
-                      </p>
-                    </div>
-
-                    <p className="text-[10px] font-mono text-slate-500 pt-1">
-                      Never leaves this device.
-                    </p>
-                  </div>
-
-                  {/* Right: Sanitized Fact */}
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-3 flex flex-col justify-between">
-                    <div className="space-y-2">
-                      <div className="text-xs text-sky-400 font-mono font-semibold flex items-center gap-1.5">
-                        <Share2 className="w-3 h-3" />
-                        <span>Proposed Fact for Fleet</span>
-                      </div>
-
-                      {isPending ? (
-                        <textarea
-                          value={currentFact}
-                          onChange={(e) => handleTextChange(item.id, e.target.value)}
-                          rows={2}
-                          className="w-full text-xs font-mono text-white bg-slate-950 border border-slate-800 rounded-lg p-2.5 focus:outline-none focus:border-sky-500 resize-none leading-relaxed"
-                          placeholder="Proposed sanitized fact..."
-                        />
-                      ) : (
-                        <p className="text-xs font-mono text-slate-200 bg-slate-950 p-2.5 rounded border border-slate-800/80 leading-relaxed">
-                          {item.proposed_text}
-                        </p>
-                      )}
-
-                      {/* Verification Checklist */}
-                      <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-mono">
-                        <span className="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40">
-                          PII: None ✓
-                        </span>
-                        {checks.grounding !== undefined && (
-                          <span className="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40">
-                            Grounding: {Math.round(checks.grounding * 100)}% ✓
-                          </span>
-                        )}
-                        {checks.numbers_preserved !== undefined && (
-                          <span className="px-2 py-0.5 rounded bg-emerald-950/30 text-emerald-400 border border-emerald-800/40">
-                            Numbers: Verified ✓
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {isPending ? (
-                      <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800/80">
-                        <button
-                          onClick={() => rejectMutation.mutate(item.id)}
-                          disabled={rejectMutation.isPending || approveMutation.isPending}
-                          className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
-                        >
-                          Keep Private
-                        </button>
-                        <button
-                          onClick={() => handleApprove(item)}
-                          disabled={approveMutation.isPending || rejectMutation.isPending || !currentFact.trim()}
-                          className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-medium text-xs transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                        >
-                          <Share2 className="w-3.5 h-3.5" />
-                          <span>Share to Fleet</span>
-                        </button>
-                      </div>
-                    ) : item.status === "approved" ? (
-                      <div className="text-[11px] font-mono text-emerald-400 flex items-center gap-1 pt-1 border-t border-slate-800/80">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        <span>Approved &amp; Synced</span>
-                      </div>
-                    ) : (
-                      <div className="text-[11px] font-mono text-slate-500 flex items-center gap-1 pt-1 border-t border-slate-800/80">
-                        <XCircle className="w-3.5 h-3.5 text-rose-400" />
-                        <span>Kept Local</span>
-                      </div>
-                    )}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mt-4">
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                    {results.map((r) => (
+                      <li
+                        key={r.label}
+                        className={cn("inline-flex items-center gap-1 text-xs", r.ok ? "text-muted" : "text-warn")}
+                      >
+                        {r.ok ? <Check className="w-3.5 h-3.5 text-ok" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                        {r.label}
+                      </li>
+                    ))}
+                  </ul>
+                  <div className="flex gap-2 justify-end">
+                    <button onClick={() => reject.mutate(s.id)} disabled={busy} className="btn btn-ghost">
+                      Keep private
+                    </button>
+                    <button
+                      onClick={() => approve.mutate({ id: s.id, text })}
+                      disabled={busy || !text.trim()}
+                      className="btn btn-primary"
+                    >
+                      Share with team
+                    </button>
                   </div>
                 </div>
-              </div>
+              </article>
             );
-          })
-        )}
-      </div>
+          })}
+        </div>
+      )}
     </div>
   );
 }
