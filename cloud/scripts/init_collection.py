@@ -30,6 +30,7 @@ def init_collection():
         ("device_id", models.PayloadSchemaType.KEYWORD),
         ("sync_state", models.PayloadSchemaType.KEYWORD),
         ("updated_at", models.PayloadSchemaType.INTEGER),
+        ("server_ts", models.PayloadSchemaType.INTEGER),
         ("deleted", models.PayloadSchemaType.BOOL),
     ]
 

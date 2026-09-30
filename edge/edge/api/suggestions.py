@@ -57,20 +57,29 @@ def approve_suggestion(sid: str, body: ApproveSuggestionBody = None):
     if row["status"] != "pending":
         raise HTTPException(status_code=400, detail=f"Suggestion is already {row['status']}")
 
-    approved_text = (body.text.strip() if body and body.text else row["proposed_text"]).strip()
+    approved_text = " ".join((body.text if body and body.text else row["proposed_text"]).split())
+    if len(approved_text) < 12:
+        raise HTTPException(status_code=400, detail="Approved text is too short to be a reusable fact")
 
-    # Re-verify PII and grounding on any manual edit
+    # Re-verify PII on every approval, and grounding + numbers on any manual edit (spec §955)
     hits = pii.scan(approved_text)
     if hits:
         raise HTTPException(status_code=400, detail=f"Approved text contains sensitive patterns: {hits}")
+    if approved_text != row["proposed_text"]:
+        _, src = memory_service.get(row["source_memory_id"])
+        original = src.payload.get("text", "") if src else row["proposed_text"]
+        score = sanitize.grounding(approved_text, original)
+        if score < sanitize.GROUNDING_MIN:
+            raise HTTPException(status_code=400, detail=f"Edited text adds facts not in the original note (grounding {score:.2f})")
+        if not sanitize.numbers_preserved(approved_text, original):
+            raise HTTPException(status_code=400, detail="Edited text contains numbers that are not in the original note")
 
-    # Create approved shareable memory
+    # Create a NEW shareable memory marked user_approved (goes through the egress guard)
     now_ts = int(time.time() * 1000)
-    created = memory_service.create(
+    created = memory_service.create_approved(
         text=approved_text,
         title=f"Fleet SOP: {row['asset_tag'] or 'Equipment Fix'}",
         asset_tag=row["asset_tag"] or "",
-        category="shareable"
     )
 
     db.execute(

@@ -53,6 +53,7 @@ async def resolve_conflict(conflict_id: str, req: ResolveRequest):
                 }
             )
             r.raise_for_status()
+            server_version = r.json().get("version")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to submit resolution to cloud: {e}")
 
@@ -62,7 +63,9 @@ async def resolve_conflict(conflict_id: str, req: ResolveRequest):
     )
 
     if new_text:
-        service.update(memory_id, text=new_text)
+        # Base the edit on the version the cloud now holds, so the push is accepted
+        # (and re-embeds the winning text on the server) instead of re-conflicting.
+        service.update(memory_id, text=new_text, server_version=server_version)
 
     db.execute(
         "UPDATE conflicts SET status='resolved', resolution=? WHERE id=?",

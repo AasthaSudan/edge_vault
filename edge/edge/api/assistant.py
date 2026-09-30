@@ -89,9 +89,10 @@ def save_message_as_memory(mid: str):
         saved = memory_service.create(
             text=text,
             title="Assistant Research Note",
-            category="private"
+            category="private",
+            reason="Derived from private notes (taint)",
+            dedup=False,  # never merge into (and overwrite) the private note it quotes
         )
-        saved["gate_reason"] = "Derived from private notes (taint)"
         return {
             "status": "saved",
             "category": "private",
@@ -102,7 +103,8 @@ def save_message_as_memory(mid: str):
     # Otherwise let standard gate evaluate (with PII scanning)
     saved = memory_service.create(
         text=text,
-        title="Assistant Fact Note"
+        title="Assistant Fact Note",
+        dedup=False,  # a derived answer must not overwrite the fleet note it cites
     )
     return {
         "status": "saved",

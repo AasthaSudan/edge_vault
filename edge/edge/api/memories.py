@@ -57,9 +57,20 @@ def update_memory(memory_id: str, req: UpdateMemoryRequest):
 
 @router.post("/{memory_id}/category")
 def override_category(memory_id: str, req: OverrideCategoryRequest):
-    updated = service.change_category(memory_id, req.category)
+    try:
+        updated = service.change_category(memory_id, req.category)
+    except PermissionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not updated:
         raise HTTPException(status_code=404, detail="Memory not found or invalid category")
+    return updated
+
+@router.post("/{memory_id}/reclassify")
+def reclassify_memory(memory_id: str):
+    """Re-run Gate v2 on a note that fell back to private while the LLM was unavailable."""
+    updated = service.reclassify(memory_id)
+    if not updated:
+        raise HTTPException(status_code=409, detail="Only notes decided by fallback can be re-classified")
     return updated
 
 @router.delete("/{memory_id}", status_code=status.HTTP_204_NO_CONTENT)

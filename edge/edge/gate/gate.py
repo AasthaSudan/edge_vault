@@ -40,7 +40,7 @@ SHAREABLE_PATTERNS = [
 def rule_check(text: str) -> GateDecision | None:
     hits = pii.scan(text)
     if hits:
-        signals = ["credential"] if any(h in ("password", "pin", "access_code") for h in hits) else ["personal"]
+        signals = ["credential"] if any(h in ("password", "pin", "access_code", "lock_combination") for h in hits) else ["personal"]
         text_lower = text.lower()
         if any(p.search(text) for p in SHAREABLE_PATTERNS) or any(w in text_lower for w in ("seal", "leak", "pump", "valve", "filter", "temp", "pressure", "vibration", "bearing", "torque", "impeller", "fix", "fixed", "replaced", "calibrated")):
             signals.append("equipment_fix")
@@ -55,7 +55,8 @@ def rule_check(text: str) -> GateDecision | None:
     return None
 
 
-def _heuristic_classify_v2(text: str, nbrs: list[dict], corr: list[dict], ctx: dict) -> GateDecision:
+def _heuristic_signals(text: str) -> list[str]:
+    """Keyword signals used only when the LLM is unavailable. They never decide egress."""
     signals = []
     text_lower = text.lower()
 
@@ -85,22 +86,17 @@ def _heuristic_classify_v2(text: str, nbrs: list[dict], corr: list[dict], ctx: d
         else:
             signals.append("status")
 
-    # Mixed check: if technical and private both present -> private
-    if bool(set(signals) & PRIVATE_SIGNALS):
-        return GateDecision("private", "fallback", "Sensitive mention identified", signals=signals, context_used=ctx)
+    return signals
 
-    if bool(set(signals) & {"status", "time_keeping"}) and not bool(set(signals) & TECH_SIGNALS):
-        return GateDecision("routine", "fallback", "Status or timekeeping event without reusable equipment insight", signals=signals, context_used=ctx)
 
-    if bool(set(signals) & TECH_SIGNALS):
-        cat, reason, flags = policy.apply(
-            {"category": "shareable", "signals": signals, "reason": "Reusable industrial equipment diagnosis or repair procedure"},
-            nbrs,
-            corr
-        )
-        return GateDecision(cat, "fallback", reason, signals=signals, flags=flags, context_used=ctx)
-
-    return GateDecision("private", "fallback", "Classifier unavailable; kept local by default", signals=signals, context_used=ctx)
+def _fallback(text: str, ctx: dict) -> GateDecision:
+    """Fail closed (spec §7.7): without an LLM verdict a note is ALWAYS private.
+    Keyword signals are kept so a technical note can still yield a Split & Share
+    suggestion, which needs human approval before anything leaves the device."""
+    return GateDecision(
+        "private", "fallback", "Classifier unavailable; kept local by default",
+        signals=_heuristic_signals(text), flags=["llm_unavailable"], context_used=ctx
+    )
 
 
 def decide_v2(text: str, dense: list[float], memory_id: str | None = None) -> GateDecision:
@@ -130,7 +126,7 @@ def decide_v2(text: str, dense: list[float], memory_id: str | None = None) -> Ga
             continue
 
     # Fallback when LLM is offline or timed out
-    return _heuristic_classify_v2(text, nbrs, corr, ctx)
+    return _fallback(text, ctx)
 
 
 def decide(text: str) -> GateDecision:

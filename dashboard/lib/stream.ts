@@ -4,6 +4,8 @@ export type AskEvent =
   | {
       type: "done";
       message_id: string;
+      text?: string;
+      attributed?: boolean;
       cited_ns: number[];
       cited: string[];
       grounded: boolean;
