@@ -32,7 +32,7 @@ def run(model: str) -> dict:
     with open(eval_path, "r", encoding="utf-8") as f:
         items = [json.loads(line) for line in f if line.strip()]
 
-    runs, lat = [], []
+    runs, lat, sources = [], [], {}
     for run_idx in range(5):
         preds = []
         for it in items:
@@ -40,6 +40,7 @@ def run(model: str) -> dict:
             d = gate.decide_v2(it["text"], embed_doc(it["text"])["dense"])
             lat.append((time.perf_counter() - t0) * 1000)
             preds.append(d.category)
+            sources[d.source] = sources.get(d.source, 0) + 1
         runs.append(preds)
 
     labels = [it["label"] for it in items]
@@ -55,6 +56,7 @@ def run(model: str) -> dict:
         "accuracy": round(acc, 3),
         "false_shareables": false_share,
         "flips": flips,
+        "decided_by": sources,
         "p50_ms": p50,
         "p95_ms": p95,
         "loaded": llm.loaded_models(),

@@ -6,7 +6,7 @@ from qdrant_edge import Point, UpdateOperation, ScrollRequest, Filter, FieldCond
 from edge.config import settings
 from edge.store.embed import embed_doc
 from edge.store.shards import shard_for, private, shared, Shard
-from edge.gate import gate as gatemod
+from edge.gate import gate as gatemod, pii
 from edge.gate import worker as gate_worker
 from edge.memory.dedup import find_duplicate
 from edge.privacy import egress
@@ -69,25 +69,33 @@ def create(
     text: str,
     title: str = "",
     asset_tag: str = "",
-    category: Optional[str] = None
+    category: Optional[str] = None,
+    reason: Optional[str] = None,
+    dedup: bool = True
 ) -> dict:
+    """dedup=False for derived content (e.g. a saved assistant answer): it must never be
+    merged into, and overwrite, the note it was derived from."""
     mid = str(uuid.uuid4())
     ts = now_ms()
     vectors = embed_doc(text)
+
+    # A PII rule hit outranks a requested "shareable" (privacy rule 2): fall through to the rule path.
+    if category == "shareable" and pii.scan(f"{title} {text}"):
+        category = None
 
     # 1. Manual user override specified at creation
     if category and category in ("shareable", "private", "routine"):
         d = gatemod.GateDecision(
             category=category,
             source="user",
-            reason="Set manually by technician",
+            reason=reason or "Set manually by technician",
             pii_hits=[],
             signals=["equipment_fix"] if category == "shareable" else []
         )
         target_shard = shard_for(category)
 
         # Check for near duplicate
-        dup = find_duplicate(target_shard, vectors["dense"], asset_tag=asset_tag)
+        dup = find_duplicate(target_shard, vectors["dense"], asset_tag=asset_tag) if dedup else None
         if dup:
             cur = dict(dup.payload)
             old_version = cur.get("version", 1)
@@ -130,7 +138,7 @@ def create(
 
     # 3. Mode Sync (Evaluation mode or fallback)
     if settings.gate_mode == "sync":
-        return finalize(mid, text, title, asset_tag, ts, vectors, provisional=False)
+        return finalize(mid, text, title, asset_tag, ts, vectors, provisional=False, dedup=dedup)
 
     # 4. Mode Async (Fail-closed by construction): write provisional private immediately
     pending_decision = gatemod.GateDecision(
@@ -140,9 +148,32 @@ def create(
         signals=[]
     )
     payload = _base_payload(mid, text, title, asset_tag, pending_decision, ts)
+    if not dedup:
+        payload["derived"] = True  # tells finalize() not to merge it into an existing note
     _upsert(private, mid, vectors, payload)
     emit("memory.created", mid, {"category": "private", "pending": True})
     _enqueue_job(mid, "classify")
+    return payload
+
+
+def create_approved(text: str, title: str = "", asset_tag: str = "") -> dict:
+    """Split & Share (spec §955): a NEW shareable memory holding a sanitized fact the
+    technician approved. No dedup merge, and no reference to the private original:
+    that link lives only in the local share_suggestions table."""
+    mid = str(uuid.uuid4())
+    ts = now_ms()
+    vectors = embed_doc(text)
+    d = gatemod.GateDecision(
+        category="shareable",
+        source="user_approved",
+        reason="Sanitized from a private note, approved by technician",
+        signals=["equipment_fix"],
+    )
+    payload = _base_payload(mid, text, title, asset_tag, d, ts)
+    _upsert(shared, mid, vectors, payload)
+    egress.enqueue_shareable(mid, vectors, payload, 1, 0)
+    emit("gate.decided", mid, {"category": "shareable", "source": "user_approved", "reason": d.reason})
+    emit("memory.created", mid, {"category": "shareable"})
     return payload
 
 
@@ -153,7 +184,8 @@ def finalize(
     asset_tag: str = "",
     created_at: int = None,
     vectors: dict = None,
-    provisional: bool = True
+    provisional: bool = True,
+    dedup: bool = True
 ) -> dict:
     """Run Gate v2 and finalize memory category. Called by worker thread or sync mode."""
     created_at = created_at or now_ms()
@@ -162,7 +194,7 @@ def finalize(
     ts = now_ms()
 
     if d.category == "shareable":
-        dup = find_duplicate(shared, vectors["dense"], asset_tag=asset_tag)
+        dup = find_duplicate(shared, vectors["dense"], asset_tag=asset_tag) if dedup else None
         if dup:
             cur = dict(dup.payload)
             base = cur.get("version", 1)
@@ -214,6 +246,22 @@ def finalize(
     return payload
 
 
+def reclassify(mid: str) -> Optional[dict]:
+    """Re-queue a note the gate could not classify (LLM was down) for Gate v2.
+    Only fallback/pending notes qualify: rule hits and user decisions are final."""
+    sh, rec = get(mid)
+    if not rec or sh is not private:
+        return None
+    cur = dict(rec.payload)
+    if cur.get("gate_source") not in ("fallback", "pending"):
+        return None
+    cur.update(gate_source="pending", gate_reason="Classifying on device…")
+    with sh.lock:
+        sh.shard.update(UpdateOperation.set_payload([mid], {"gate_source": "pending", "gate_reason": cur["gate_reason"]}))
+    _enqueue_job(mid, "classify")
+    return cur
+
+
 def get(mid: str) -> Tuple[Optional[Shard], Optional[object]]:
     for sh in (private, shared):
         with sh.lock:
@@ -259,14 +307,23 @@ def list_memories(
     return results[offset:offset + limit]
 
 
-def update(mid: str, text: Optional[str] = None, title: Optional[str] = None, asset_tag: Optional[str] = None) -> Optional[dict]:
+def update(
+    mid: str,
+    text: Optional[str] = None,
+    title: Optional[str] = None,
+    asset_tag: Optional[str] = None,
+    server_version: Optional[int] = None
+) -> Optional[dict]:
+    """Edit a memory. `server_version` is passed after a conflict resolution, so the
+    edit is based on the version the cloud now holds instead of the stale local one."""
     sh, rec = get(mid)
     if not rec or not sh:
         return None
 
     cur = dict(rec.payload)
-    cur["version"] = cur.get("version", 1) + 1
-    cur["base_version"] = cur.get("version", 1)
+    base = server_version if server_version is not None else cur.get("version", 1)
+    cur["base_version"] = base
+    cur["version"] = base + 1
     cur["updated_at"] = now_ms()
 
     if title is not None:
@@ -280,6 +337,22 @@ def update(mid: str, text: Optional[str] = None, title: Optional[str] = None, as
     cur["text"] = new_text
 
     vectors = embed_doc(new_text)
+
+    # An edit that introduces PII into a shared note moves it back to private and
+    # retracts it from the fleet, instead of leaving it in the shared shard.
+    hits = pii.scan(f"{cur.get('title', '')} {new_text}") if cur.get("category") == "shareable" else []
+    if hits:
+        reason = f"Matched rule: {', '.join(hits)}"
+        cur.update(category="private", gate_source="rule", gate_reason=reason,
+                   pii_hits=hits, sync_state="local_only")
+        _delete(sh, mid)
+        _upsert(private, mid, vectors, cur)
+        egress.enqueue_shareable(mid, vectors, dict(cur, category="shareable"),
+                                 cur["version"], cur["base_version"], op="delete")
+        emit("gate.decided", mid, {"category": "private", "source": "rule", "reason": reason})
+        emit("memory.updated", mid, {"category": "private"})
+        return cur
+
     _upsert(sh, mid, vectors, cur)
 
     if cur.get("category") == "shareable":
@@ -299,7 +372,8 @@ def delete(mid: str) -> bool:
     if cur.get("category") == "shareable":
         cur["deleted"] = True
         cur["updated_at"] = ts
-        cur["version"] = cur.get("version", 1) + 1
+        cur["base_version"] = cur.get("version", 1)
+        cur["version"] = cur["base_version"] + 1
         vectors = embed_doc(cur.get("text", ""))
         _upsert(sh, mid, vectors, cur)
         egress.enqueue_shareable(mid, vectors, cur, cur["version"], cur["base_version"], op="delete")
@@ -324,14 +398,19 @@ def change_category(mid: str, new_category: str) -> Optional[dict]:
     old_source = cur.get("gate_source")
     if old_cat == new_category:
         return cur
+    if new_category == "shareable":
+        hits = pii.scan(f"{cur.get('title', '')} {cur.get('text', '')}")
+        if hits:
+            raise PermissionError(f"Note contains sensitive patterns ({', '.join(hits)}); it cannot be shared.")
 
     ts = now_ms()
     cur["category"] = new_category
     cur["gate_source"] = "user"
     cur["gate_reason"] = f"Manual override by technician from {old_cat} to {new_category}"
+    cur["sync_state"] = "pending" if new_category == "shareable" else "local_only"
     cur["updated_at"] = ts
-    cur["version"] = cur.get("version", 1) + 1
     cur["base_version"] = cur.get("version", 1)
+    cur["version"] = cur["base_version"] + 1
 
     new_sh = shard_for(new_category)
     vectors = embed_doc(cur["text"])

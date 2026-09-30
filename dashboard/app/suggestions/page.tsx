@@ -42,6 +42,14 @@ export default function SuggestionsPage() {
       qc.invalidateQueries({ queryKey: ["local-stats"] });
       qc.invalidateQueries({ queryKey: ["sync-status"] });
     },
+    // The edge re-checks PII, grounding and numbers on edits and explains a refusal
+    onError: (err: Error) => {
+      let msg = err.message;
+      try {
+        msg = JSON.parse(err.message).detail ?? msg;
+      } catch {}
+      alert(`Not shared: ${msg}`);
+    },
   });
 
   const rejectMutation = useMutation({
