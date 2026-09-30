@@ -1,16 +1,17 @@
 import json
 import httpx
-from typing import Optional
+from typing import Literal, Optional
 from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException
 from edge.config import settings
 from edge import db
 from edge.events import emit
+from edge.gate import pii
 from edge.memory import service
 from edge.assistant import reconcile
 
 class ResolveRequest(BaseModel):
-    resolution: str  # keep_local | keep_remote | merged
+    resolution: Literal["keep_local", "keep_remote", "merged"]
     merged_text: Optional[str] = None
 
 router = APIRouter(prefix="/conflicts", tags=["Conflicts"])
@@ -60,6 +61,15 @@ async def resolve_conflict(conflict_id: str, req: ResolveRequest):
     memory_id = row["memory_id"]
     local_data = json.loads(row["local_json"])
     remote_data = json.loads(row["remote_json"])
+
+    if req.resolution == "merged":
+        # The merge box is typed by hand and goes to the fleet, so it is checked here, before the cloud
+        # call: the cloud stores it as fleet text and would hold anything typed there until retracted.
+        if not (req.merged_text or "").strip():
+            raise HTTPException(status_code=400, detail="Merged text is empty: write the merged note or keep one version")
+        hits = pii.scan(req.merged_text)
+        if hits:
+            raise HTTPException(status_code=400, detail=f"Merged text contains sensitive patterns ({', '.join(hits)}); it cannot be shared")
 
     # Call Cloud Sync API to coordinate resolution across fleet
     async with httpx.AsyncClient(timeout=10) as client:
