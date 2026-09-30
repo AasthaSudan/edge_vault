@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from edge import events
@@ -14,7 +15,7 @@ async def stream(request: Request):
     async def gen():
         try:
             # Send initial connected event
-            yield f"data: {json.dumps({'type': 'stream.connected', 'ts': int(asyncio.get_event_loop().time() * 1000)})}\n\n"
+            yield f"data: {json.dumps({'type': 'stream.connected', 'ts': int(time.time() * 1000)})}\n\n"
             while not await request.is_disconnected():
                 try:
                     ev = await asyncio.wait_for(q.get(), timeout=15)
