@@ -217,6 +217,9 @@ sequenceDiagram
 - **Automatic TTL Pruner**: Cleans up temporary maintenance records marked as `routine` after 14 days to keep edge storage lightweight.
 - **Push-Before-Pull Synchronization**: Flushes the local SQLite WAL outbox queue to the server before pulling down snapshot state, preventing server updates from overwriting unsynced local mutations.
 - **Cloud Category Guard**: The Cloud Sync API rejects any payload where `category != "shareable"`, mathematically ensuring that private data never reaches the central cluster.
+- **AI Conflict Reconciliation**: When two devices' edits collide, the on-device LLM explains in one sentence whether it is a *progression over time* ("normal on Mon, leaking on Wed"), a *genuine contradiction* (25 Nm vs 20 Nm) or the *same fact reworded*, and recommends a resolution. Deterministic checks catch differing values and opposite instructions the small model misses; the technician still decides.
+- **Cross-Device Corroboration ("Fleet Verified")**: When independent devices report the same fact about the same asset, the cloud links the notes and marks them `fleet_verified` with the reporting devices. Reports with different values or opposite wording are never counted as agreement. The assistant states verification from data: "[1] is fleet verified: reported independently by 2 devices".
+- **Deployment-Ready Cloud**: Fleet API key on all data endpoints, explicit CORS, production mode that refuses insecure config, non-root Docker image with health checks, and a production compose file. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 - **Clean Enterprise Dashboard**: Built with Next.js 14 App Router and Tailwind CSS. Features an executive dark slate palette, 32px engineering grid overlay, zero neon clutter, live Server-Sent Events (SSE) stream, and an offline network simulation toggle.
 
 ---
@@ -433,6 +436,7 @@ curl http://localhost:8080/stats
 | `POST` | `/sync/now` | Manually triggers immediate push-before-pull sync cycle |
 | `GET` | `/sync/outbox` | Lists pending queue records in SQLite outbox |
 | `GET` | `/conflicts` | Lists unresolved sync conflicts |
+| `POST` | `/conflicts/{conflict_id}/analyze` | On-device LLM reconciliation: `progression` / `contradiction` / `same_fact` + recommended resolution (cached; `?refresh=true` recomputes) |
 | `POST` | `/conflicts/{conflict_id}/resolve` | Resolves conflict (`keep_local`, `keep_remote`, or `merged`) |
 | `GET` | `/events` | Real-time Server-Sent Events (SSE) stream for dashboard updates |
 
@@ -440,13 +444,15 @@ curl http://localhost:8080/stats
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/push` | Ingests batched shareable notes from edge outbox (guarded) |
+| `POST` | `/push` | Ingests batched shareable notes from edge outbox (guarded; links corroborating reports from other devices) |
 | `GET` | `/snapshot` | Serves current shard snapshot for initial edge bootstrap |
 | `POST` | `/snapshot/partial` | Serves incremental snapshot updates to connected edge nodes |
 | `GET` | `/pull/records` | Paged delta sync keyed on the server clock (`server_ts`); edges page with `next_offset` and resume from `server_now` |
 | `POST` | `/conflicts/resolve` | Coordinates distributed conflict resolution across fleet |
-| `GET` | `/stats` | Returns fleet stats proving `private_on_server == 0` |
-| `GET` | `/health` | Cluster health check |
+| `GET` | `/stats` | Returns fleet stats proving `private_on_server == 0`, plus `fleet_verified_on_server` (public) |
+| `GET` | `/health` | Liveness + Qdrant reachability (public) |
+
+All cloud endpoints except `/health` and `/stats` require `Authorization: Bearer <FLEET_API_KEY>` when the key is set (always in production).
 
 ---
 
@@ -485,6 +491,7 @@ Detailed architectural specifications, verification benchmarks, and design bluep
 - [Phase 3: Edge-Cloud Sync & Conflicts](docs/PHASE_3_EDGE_CLOUD_SYNC.md) — SQLite WAL outbox, push-before-pull sync, distributed conflict resolution.
 - [Phase 4: Dashboard, Observability & Demo](docs/PHASE_4_DASHBOARD_DEMO.md) — Next.js 14 console, live SSE stream, privacy audit proof.
 - [Phase 5: Local Intelligence Layer (On-Device LLM)](docs/PHASE_5_LOCAL_INTELLIGENCE.md) — Context-aware Gate v2, Offline Assistant with citations, Split & Share inbox, Egress guard, Taint rules.
+- [Deployment Guide](docs/DEPLOYMENT.md) — Production cloud stack (Docker, HTTPS, fleet key), edge device install on Windows, release checklist.
 
 ---
 

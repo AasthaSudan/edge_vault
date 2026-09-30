@@ -151,6 +151,13 @@ def ask(session_id: str | None, question: str, scope: str = "device"):
         cited_ns = sorted({int(n) for n in CITE.findall(text) if int(n) in valid})
         attributed = bool(cited_ns)
     cited = [valid[n]["memory_id"] for n in cited_ns]
+    # State fleet verification from data, not model wording: which cited notes were
+    # independently reported by more than one device.
+    verified = [valid[n] for n in cited_ns if valid[n].get("fleet_verified")]
+    if verified:
+        text += " " + " ".join(
+            f"[{s['n']}] is fleet verified: reported independently by {len(s['corroborated_by'])} devices "
+            f"({', '.join(s['corroborated_by'])})." for s in verified)
     grounded = bool(cited) or text.startswith("I don't have")
     latency = {
         "retrieve": got["ms"],

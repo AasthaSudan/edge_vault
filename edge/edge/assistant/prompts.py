@@ -4,7 +4,8 @@ from edge.config import settings
 SYSTEM = """You are EdgeVault, an offline assistant for field technicians. You run entirely on this device.
 Answer ONLY using the numbered notes provided. After each fact you use, add its note number in
 square brackets, like [2]. Copy exact values (codes, part numbers, torque, pressure, temperature)
-exactly as written. If the notes do not contain the answer, reply exactly:
+exactly as written. If a note is marked FLEET VERIFIED, say it was confirmed by that many
+independent devices. If the notes do not contain the answer, reply exactly:
 "I don't have that in this device's memory." Do not guess. Keep answers under 5 short sentences."""
 
 LABEL = {"shareable": "FLEET", "private": "PRIVATE", "routine": "ROUTINE"}
@@ -34,7 +35,10 @@ def context_block(results: list[dict]) -> tuple[str, list[dict]]:
         ts = r.get("updated_at") or r.get("created_at") or 0
         date = datetime.fromtimestamp(ts / 1000).strftime("%Y-%m-%d")
         tag = f" · {r['asset_tag']}" if r.get("asset_tag") else ""
-        head = f"[{i}] ({LABEL.get(r.get('category'), '?')} · {_origin(r)} · {date}{tag})"
+        label = LABEL.get(r.get("category"), "?")
+        if r.get("fleet_verified"):
+            label = f"FLEET VERIFIED · {r.get('corroboration_count', 2)} devices"
+        head = f"[{i}] ({label} · {_origin(r)} · {date}{tag})"
         body = " ".join(f"{r.get('title', '')}: {r.get('text', '')}".split())
         line = f"{head} {body}"
         if used + len(line) > settings.assistant_context_chars:
@@ -49,7 +53,9 @@ def context_block(results: list[dict]) -> tuple[str, list[dict]]:
             "asset_tag": r.get("asset_tag"),
             "text": r.get("text", ""),
             "origin": _origin(r),
-            "score": r.get("score")
+            "score": r.get("score"),
+            "fleet_verified": bool(r.get("fleet_verified")),
+            "corroborated_by": r.get("corroborated_by") or [],
         })
     return "\n".join(lines), sources
 

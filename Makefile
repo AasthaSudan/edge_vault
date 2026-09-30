@@ -13,7 +13,7 @@ provision:
 
 run:
 	@echo "Starting EdgeVault FastAPI edge node on port 7001..."
-	PYTHONPATH=edge $(UVICORN) edge.main:app --host 0.0.0.0 --port 7001 --reload
+	PYTHONPATH=edge $(UVICORN) edge.main:app --host 127.0.0.1 --port 7001 --reload
 
 cloud:
 	@echo "Starting Qdrant Docker and Cloud Sync API..."
@@ -22,10 +22,10 @@ cloud:
 	PYTHONPATH=cloud $(UVICORN) sync_api.main:app --host 0.0.0.0 --port 8080 --reload
 
 edge-a:
-	DEVICE_ID=device-a PORT=7001 PYTHONPATH=edge $(UVICORN) edge.main:app --host 0.0.0.0 --port 7001 --reload
+	DEVICE_ID=device-a PORT=7001 PYTHONPATH=edge $(UVICORN) edge.main:app --host 127.0.0.1 --port 7001 --reload
 
 edge-b:
-	DEVICE_ID=device-b PORT=7002 PYTHONPATH=edge $(UVICORN) edge.main:app --host 0.0.0.0 --port 7002 --reload
+	DEVICE_ID=device-b PORT=7002 PYTHONPATH=edge $(UVICORN) edge.main:app --host 127.0.0.1 --port 7002 --reload
 
 ui-a:
 	@echo "Starting Dashboard for Device A on http://localhost:3000..."

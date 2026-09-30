@@ -7,7 +7,9 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 from qdrant_client import QdrantClient, models
 
-_db_path = Path("./data/cloud_conflicts.db")
+from sync_api.security import CONFLICTS_DB_PATH
+
+_db_path = Path(CONFLICTS_DB_PATH)
 _db_path.parent.mkdir(parents=True, exist_ok=True)
 _conn = sqlite3.connect(str(_db_path), check_same_thread=False, isolation_level=None)
 _conn.execute("PRAGMA journal_mode=WAL")

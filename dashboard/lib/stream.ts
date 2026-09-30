@@ -21,6 +21,8 @@ export type Source = {
   text?: string;
   origin: string;
   score?: number;
+  fleet_verified?: boolean;
+  corroborated_by?: string[];
 };
 
 export async function* askStream(

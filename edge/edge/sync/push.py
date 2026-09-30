@@ -43,7 +43,7 @@ async def push_once(client: httpx.AsyncClient) -> int:
     }
 
     try:
-        resp = await client.post(f"{settings.sync_api_url}/push", json=body, timeout=10)
+        resp = await client.post(f"{settings.sync_api_url}/push", json=body, headers=settings.cloud_headers(), timeout=10)
         resp.raise_for_status()
     except Exception as e:
         outbox.fail(ids, str(e))

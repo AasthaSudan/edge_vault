@@ -16,6 +16,7 @@ build/
 node_modules/
 dashboard/node_modules/
 dashboard/.next/
+dashboard/.next-b/
 dashboard/out/
 .next/
 out/
@@ -33,6 +34,8 @@ edge/data/
 .env
 .env.local
 .env.*.local
+.env.production
+*.env.production
 
 # OS generated
 .DS_Store

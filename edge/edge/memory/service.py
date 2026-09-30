@@ -44,6 +44,16 @@ def _base_payload(mid: str, text: str, title: str, asset_tag: str, d: gatemod.Ga
     }
 
 
+def _corroborate(cur: dict) -> None:
+    """This device's note merged into a fleet note from ANOTHER device: an independent
+    report of the same fact. Record it; the cloud keeps the union across all pushes."""
+    if cur.get("category") != "shareable" or cur.get("device_id") == settings.device_id:
+        return
+    devs = set(cur.get("corroborated_by") or []) | {cur.get("device_id"), settings.device_id}
+    devs.discard(None)
+    cur.update(corroborated_by=sorted(devs), corroboration_count=len(devs), fleet_verified=len(devs) >= 2)
+
+
 def _upsert(sh: Shard, mid: str, vectors: dict, payload: dict):
     with sh.lock:
         sh.shard.update(UpdateOperation.upsert_points([Point(id=mid, vector=vectors, payload=payload)]))
@@ -106,6 +116,7 @@ def create(
             if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
                 cur["merged_from"] = []
             cur["merged_from"].append(mid)
+            _corroborate(cur)
 
             _upsert(target_shard, str(dup.id), vectors, cur)
             if category == "shareable":
@@ -208,6 +219,7 @@ def finalize(
             if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
                 cur["merged_from"] = []
             cur["merged_from"].append(mid)
+            _corroborate(cur)
 
             _upsert(shared, str(dup.id), vectors, cur)
             egress.enqueue_shareable(str(dup.id), vectors, cur, cur["version"], base)

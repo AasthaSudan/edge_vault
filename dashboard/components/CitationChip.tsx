@@ -22,15 +22,21 @@ export const CitationChip: React.FC<CitationChipProps> = ({ n, source, onClick }
         return "bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700/50";
       case "shareable":
       default:
+        if (source?.fleet_verified) {
+          return "bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50";
+        }
         return "bg-sky-950/40 border-sky-800/50 text-sky-300 hover:bg-sky-900/50";
     }
   };
 
+  const verifiedBy = source?.corroborated_by?.length ?? 0;
   const label =
     category === "private"
       ? "Private"
       : category === "routine"
       ? "Routine"
+      : source?.fleet_verified
+      ? `Fleet verified · ${verifiedBy} devices`
       : `Fleet · ${origin}`;
 
   if (onClick) {
