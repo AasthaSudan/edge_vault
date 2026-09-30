@@ -4,6 +4,13 @@ from typing import List, Dict, Any
 from edge import db
 
 def enqueue(memory_id: str, op: str, point: dict, version: int, base_version: int):
+    if op == "delete":
+        # A retraction supersedes everything still waiting to leave the device. Without this,
+        # a note shared and then taken back while offline would still push its full text first.
+        db.execute(
+            "UPDATE outbox SET status='cancelled' WHERE memory_id=? AND op='upsert' AND status='pending'",
+            (memory_id,)
+        )
     db.execute(
         "INSERT INTO outbox(memory_id, op, point_json, version, base_version, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (memory_id, op, json.dumps(point), version, base_version, int(time.time() * 1000))

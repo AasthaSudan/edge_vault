@@ -62,7 +62,9 @@ def approve_suggestion(sid: str, body: ApproveSuggestionBody = None):
         raise HTTPException(status_code=400, detail="Approved text is too short to be a reusable fact")
 
     # Re-verify PII on every approval, and grounding + numbers on any manual edit (spec §955)
-    hits = pii.scan(approved_text)
+    # The asset tag goes into the new note's title and payload, so it is checked here, before any write:
+    # the egress guard would otherwise refuse it after the shared note already exists (an orphan).
+    hits = pii.scan(f"{approved_text} {row['asset_tag'] or ''}")
     if hits:
         raise HTTPException(status_code=400, detail=f"Approved text contains sensitive patterns: {hits}")
     if approved_text != row["proposed_text"]:
