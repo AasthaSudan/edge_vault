@@ -109,7 +109,7 @@ cd dashboard; npm run start                                           # http://l
 
 `start-edge.ps1` checks that Ollama answers on loopback with the configured model, that the embedding model is provisioned, and that a fleet key is set when the cloud URL is HTTPS. It serves the edge API on `127.0.0.1` only.
 
-The dashboard's `NEXT_PUBLIC_EDGE_API` / `NEXT_PUBLIC_CLOUD_API` are baked in at `npm run build`; set them (for example in `dashboard/.env.local`) before building if the defaults (`http://localhost:7001`, `http://localhost:8080`) don't apply.
+The dashboard's `NEXT_PUBLIC_EDGE_API` / `NEXT_PUBLIC_CLOUD_API` are baked in at `npm run build`; set them (for example in `dashboard/.env.local`) before building if the defaults (`http://127.0.0.1:7001`, `http://127.0.0.1:8080`) don't apply.
 
 To start at login, add both commands to Windows Task Scheduler ("At log on", "Run whether user is logged on or not").
 

@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     data_root: Path = Path("./data")
     dense_model: str = "BAAI/bge-small-en-v1.5"
     dense_dim: int = 384
-    sync_api_url: str = "http://localhost:8080"
+    sync_api_url: str = "http://127.0.0.1:8080"
     fleet_api_key: str = ""           # sent as a Bearer token to the cloud sync API
     # Browser origins allowed to call this edge API. Never "*": the edge serves PRIVATE notes,
     # and any web page the technician opens could otherwise read them from localhost.

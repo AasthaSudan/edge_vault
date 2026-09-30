@@ -36,13 +36,13 @@ edge-b:
 
 ui-a:
 	@echo "Starting Dashboard for Device A on http://localhost:3000..."
-	cd dashboard && NEXT_PUBLIC_EDGE_API=http://localhost:7001 NEXT_PUBLIC_CLOUD_API=http://localhost:8080 PORT=3000 npm run dev
+	cd dashboard && NEXT_PUBLIC_EDGE_API=http://127.0.0.1:7001 NEXT_PUBLIC_CLOUD_API=http://127.0.0.1:8080 PORT=3000 npm run dev
 
 ui-b:
 	@echo "Starting Dashboard for Device B on http://localhost:3001..."
 	# NEXT_DIST_DIR: NEXT_PUBLIC_* values are baked into the build, so two dev servers sharing ".next"
 	# would serve each other's bundles and Device B's dashboard could talk to Device A's edge
-	cd dashboard && NEXT_DIST_DIR=.next-b NEXT_PUBLIC_EDGE_API=http://localhost:7002 NEXT_PUBLIC_CLOUD_API=http://localhost:8080 PORT=3001 npm run dev -- -p 3001
+	cd dashboard && NEXT_DIST_DIR=.next-b NEXT_PUBLIC_EDGE_API=http://127.0.0.1:7002 NEXT_PUBLIC_CLOUD_API=http://127.0.0.1:8080 PORT=3001 npm run dev -- -p 3001
 
 seed:
 	@echo "Seeding rehearsed demo memories..."
