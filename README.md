@@ -150,7 +150,7 @@ sequenceDiagram
     else Verified Evidence Found
         Edge->>Ollama: Generate with numbered sources [1], [2] (Strict Grounding)
         Ollama-->>Edge: Stream tokens with citations
-        Edge-->>UI: SSE Token Stream + Citation Provenance Pills
+        Edge-->>UI: NDJSON Token Stream + Citation Provenance Pills
     end
 
     opt User clicks "Save to Notes"
@@ -327,29 +327,26 @@ curl -X POST http://localhost:7001/memories \
 
 ### 2. Querying the On-Device Assistant (Local RAG)
 
-Query the local assistant with streaming Server-Sent Events. The assistant cites verified numbered sources `[1] Fleet`, `[2] Private`:
+Query the local assistant. The response is always a stream of newline-delimited JSON (NDJSON, `application/x-ndjson`), one event per line, each with a `type`. The assistant cites verified numbered sources `[1] Fleet`, `[2] Private`:
 
 ```bash
 curl -N -X POST http://localhost:7001/assistant/ask \
   -H "Content-Type: application/json" \
   -d '{
     "question": "How did we fix the turbine 4 bearing overheat?",
-    "scope": "device",
-    "stream": true
+    "scope": "device"
   }'
 ```
 
-Streaming output:
+`session_id` (optional) continues an earlier conversation; `scope` is `device` or `fleet`. Streaming output:
 ```text
-event: sources
-data: {"session_id":"s-01","sources":[{"n":1,"title":"Turbine 4 Bearing Overheat Fix","category":"shareable","origin":"device-a"}]}
-
-event: token
-data: {"text":"To fix the Turbine 4 bearing overheat, replace the damaged oil filter element and flush the reservoir with ISO 46 lubricant [1]."}
-
-event: done
-data: {"message_id":"msg-42","grounded":true,"cited_ns":[1],"latency_ms":{"retrieve":7.1,"first_token":120.4,"total":480.2}}
+{"type":"sources","session_id":"s-01","sources":[{"n":1,"title":"Turbine 4 Bearing Overheat Fix","category":"shareable","memory_id":"4a712f29-..."}],"retrieve_ms":7.1}
+{"type":"token","text":"To fix the Turbine 4 bearing overheat, replace the damaged oil filter element"}
+{"type":"token","text":" and flush the reservoir with ISO 46 lubricant [1]."}
+{"type":"done","message_id":"msg-42","text":"To fix the Turbine 4 bearing overheat, ... [1].","cited_ns":[1],"cited":["4a712f29-..."],"grounded":true,"attributed":false,"replaced":null,"latency_ms":{"retrieve":7.1,"first_token":120.4,"total":480.2}}
 ```
+
+The `done.text` is the final answer and can differ from the concatenated `token` events (citations attributed, an ungrounded answer replaced by the refusal, or the extractive fallback used when the local model fails). Clients should display `done.text`.
 
 ---
 
@@ -423,7 +420,7 @@ curl http://localhost:8080/stats
 | `POST` | `/memories/{memory_id}/reclassify` | Re-runs Gate v2 on a note that fell back to private while the LLM was unavailable |
 | `DELETE` | `/memories/{memory_id}` | Soft-deletes a memory with tombstone replication |
 | `POST` | `/search` | Executes offline hybrid search with Reciprocal Rank Fusion |
-| `POST` | `/assistant/ask` | Queries on-device assistant with streaming SSE & numbered citations |
+| `POST` | `/assistant/ask` | Queries on-device assistant; streams NDJSON events (`sources`, `token`, `done`) with numbered citations |
 | `GET` | `/assistant/sessions` | Lists local chat sessions |
 | `DELETE` | `/assistant/sessions/{sid}` | Deletes a local chat session |
 | `POST` | `/assistant/messages/{id}/save` | Saves assistant answer as memory with automatic taint tracking |
@@ -470,15 +467,30 @@ make eval-gate
 make eval-assistant
 # or: PYTHONPATH=edge python edge/tests/eval_assistant.py
 
-# Verify air-gapped privacy boundaries (outbox enqueue isolation)
-PYTHONPATH=edge pytest edge/tests/test_privacy_boundaries.py
+# Evaluate on-device conflict reconciliation (progression / contradiction / same fact)
+make eval-reconcile
 
-# Verify taint propagation on assistant note saves
-PYTHONPATH=edge pytest edge/tests/test_taint.py
+# The whole unit suite CI runs: privacy boundaries, taint, durability, gate, PII rules,
+# note lifecycle (retraction, async-gate races, TTL, paging), API hardening. Needs no Ollama.
+make test-unit
+# or a single file: PYTHONPATH=edge pytest edge/tests/test_privacy_boundaries.py
+
+# Privacy import contract: the sync layer can never import the LLM, assistant or gate context
+make lint-imports
+
+# Edge-cloud sync integration (push/pull, conflicts, tombstones, contradictions). Needs a cloud API + Qdrant.
+# It pushes test notes: point SYNC_API_URL / QDRANT_URL at a throwaway cloud, never your fleet.
+make test-p3
 
 # Run complete end-to-end multi-device replication demo
 make demo
 ```
+
+Tests never write into a real device: `edge/tests/conftest.py` defaults `DEVICE_ID` to a throwaway device unless you choose one.
+
+> **Disk use:** every device folder (`data/<device>/`) preallocates about 420 MB (Qdrant Edge keeps 32 MB
+> segment and WAL files per shard), even when it holds a handful of notes. Each test or eval device counts
+> too, so delete throwaway ones (`data/ci-*`, `data/*-eval`, ...) from time to time.
 
 ---
 
