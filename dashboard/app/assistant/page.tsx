@@ -23,6 +23,7 @@ import {
   Thermometer,
 } from "lucide-react";
 import { fetchEdge, EDGE_API, POLL_MS } from "@/lib/api";
+import { DEMO_MODE, LOCAL_SETUP_URL } from "@/lib/demo";
 import { askStream, Source } from "@/lib/stream";
 import { category, errorDetail, exampleQuestions, timeAgo } from "@/lib/format";
 import { CitationChip } from "@/components/CitationChip";
@@ -58,7 +59,38 @@ function Bot({ className }: { className?: string }) {
   );
 }
 
+// The hosted demo has no on-device LLM, so the assistant is switched off there
 export default function AskPage() {
+  return DEMO_MODE ? <AskDisabled /> : <AskChat />;
+}
+
+function AskDisabled() {
+  return (
+    <div className="flex items-center justify-center min-h-[calc(100dvh-12rem)] lg:min-h-[calc(100dvh-10rem)]">
+      <div className="max-w-lg text-center">
+        <span className="mx-auto w-14 h-14 rounded-2xl bg-warn/10 ring-1 ring-inset ring-warn/25 text-warn flex items-center justify-center">
+          <Sparkles className="w-7 h-7" />
+        </span>
+        <h1 className="mt-6 text-2xl sm:text-3xl font-semibold tracking-tight">The assistant is off in this AWS demo</h1>
+        <p className="mt-3 text-muted leading-relaxed">
+          This demo is hosted on AWS without the on-device AI (local LLM), so asking questions is switched off here.
+          Run EdgeVault locally to chat with your notes and get answers with sources.
+        </p>
+        <div className="mt-7 flex flex-wrap justify-center gap-2">
+          <a href={LOCAL_SETUP_URL} target="_blank" rel="noreferrer" className="btn btn-primary">
+            Run it locally
+            <ArrowRight className="w-4 h-4" />
+          </a>
+          <Link href="/memories" className="btn btn-secondary">
+            Browse notes instead
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AskChat() {
   const qc = useQueryClient();
   const toast = useToast();
   const [scope, setScope] = useState<Scope>("device");

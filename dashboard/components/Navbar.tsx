@@ -4,8 +4,9 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Activity, FileText, Home, Inbox, MessageSquare, RefreshCw, Search, Shield } from "lucide-react";
+import { Activity, ArrowUpRight, FileText, Home, Inbox, Info, MessageSquare, RefreshCw, Search, Shield } from "lucide-react";
 import { fetchEdge, POLL_MS } from "@/lib/api";
+import { DEMO_MODE, LOCAL_SETUP_URL } from "@/lib/demo";
 import { useEdgeConnected } from "@/lib/sse";
 import { StatusMenu } from "./StatusMenu";
 import { PrivacyCheck } from "./PrivacyCheck";
@@ -164,9 +165,33 @@ function Topbar() {
           </form>
         )}
 
-        <StatusMenu />
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Only where the missing AI matters: Home's ask box and the Ask page */}
+          {DEMO_MODE && (pathname === "/" || pathname.startsWith("/assistant")) && <DemoNotice />}
+          <StatusMenu />
+        </div>
       </div>
     </header>
+  );
+}
+
+// Hosted builds only: the demo server runs without the on-device LLM
+function DemoNotice() {
+  return (
+    <a
+      href={LOCAL_SETUP_URL}
+      target="_blank"
+      rel="noreferrer"
+      title="This demo is hosted on AWS with the local LLM switched off. New notes stay private and answers quote your notes directly. Run EdgeVault locally to try the full on-device AI."
+      className="inline-flex items-center gap-2 h-8 px-3 rounded-full bg-warn/10 ring-1 ring-inset ring-warn/25 text-[13px] text-fg hover:bg-warn/15 transition-colors min-w-0"
+    >
+      <Info className="w-4 h-4 text-warn shrink-0" />
+      <span className="truncate">
+        <span className="font-medium">AWS demo</span>
+        <span className="hidden md:inline text-muted"> · local AI is off here. Run it locally for the full AI</span>
+      </span>
+      <ArrowUpRight className="w-3.5 h-3.5 text-muted shrink-0" />
+    </a>
   );
 }
 

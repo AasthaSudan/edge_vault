@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     gate_corrections_k: int = 3
     gate_neighbour_min_score: float = 0.55
     # bge-small puts most technical sentences at 0.6-0.75 cosine to each other; measured
-    # intended correction pairs score >= 0.80, unrelated notes <= 0.755 (tests/eval_gate.py).
+    # intended correction pairs score >= 0.80, unrelated notes <= 0.755 (evals/eval_gate.py).
     gate_correction_min_score: float = 0.78
     assistant_top_k: int = 4          # 6 -> 4: same eval quality, ~2 s less cold first-token (measured)
     assistant_context_chars: int = 6000

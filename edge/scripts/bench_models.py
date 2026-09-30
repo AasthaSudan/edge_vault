@@ -28,7 +28,7 @@ def run(model: str) -> dict:
     from edge.store.embed import embed_doc
 
     llm.warmup()
-    eval_path = Path(__file__).resolve().parent.parent / "tests" / "gate_eval_v2.jsonl"
+    eval_path = Path(__file__).resolve().parent.parent / "evals" / "gate_eval_v2.jsonl"
     with open(eval_path, "r", encoding="utf-8") as f:
         items = [json.loads(line) for line in f if line.strip()]
 

@@ -7,12 +7,14 @@ import { useQuery } from "@tanstack/react-query";
 import {
   ArrowRight,
   ArrowUp,
+  ArrowUpRight,
   BarChart3,
   CheckCircle2,
   CloudUpload,
   FileText,
   GitMerge,
   Inbox,
+  Info,
   Lock,
   Shield,
   Sparkles,
@@ -20,6 +22,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { fetchEdge, POLL_MS } from "@/lib/api";
+import { DEMO_MODE, LOCAL_SETUP_URL } from "@/lib/demo";
 import { exampleQuestions, greeting, percent, plural, timeAgo } from "@/lib/format";
 import { useReviewCount } from "@/components/Navbar";
 import { EquipmentBars, NotesTimeline, Sparkline, useDailyCounts } from "@/components/Charts";
@@ -110,51 +113,73 @@ export default function HomePage() {
   return (
     <div className="space-y-6">
       {/* Banner */}
-      <section className="hero relative overflow-hidden rounded-3xl text-white shadow-lift ring-1 ring-inset ring-white/10">
-        <Shield className="absolute -right-10 -top-10 w-72 h-72 text-white/[0.04] pointer-events-none" strokeWidth={1.2} />
+      <section className="hero relative overflow-hidden rounded-3xl text-hero shadow-lift ring-1 ring-inset ring-hero/10">
+        <Shield className="absolute -right-10 -top-10 w-72 h-72 text-hero/[0.05] pointer-events-none" strokeWidth={1.2} />
 
         <div className="relative p-6 sm:p-8 lg:p-10">
           <h1 className="text-[26px] leading-tight sm:text-4xl font-semibold tracking-tight">
             {hello}
             {stats?.author ? `, ${stats.author}` : ""}
           </h1>
-          <p className="mt-2 text-white/65 max-w-xl">
+          <p className="mt-2 text-hero/65 max-w-xl">
             Your notes stay on this device. Only knowledge that&apos;s safe to share reaches your team.
           </p>
 
-          <form onSubmit={ask} className="relative mt-6 max-w-2xl">
-            <Sparkles className="w-5 h-5 text-zinc-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
-            <input
-              value={question}
-              onChange={(e) => setQuestion(e.target.value)}
-              placeholder="Ask anything about your equipment…"
-              aria-label="Ask a question"
-              className="w-full h-14 rounded-2xl bg-white text-zinc-900 placeholder:text-zinc-500 pl-12 pr-16 text-[15px] shadow-lg outline-none ring-4 ring-white/5 focus:ring-white/20 transition"
-            />
-            <button
-              type="submit"
-              disabled={!question.trim()}
-              aria-label="Ask"
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl bg-zinc-900 text-white flex items-center justify-center hover:bg-zinc-700 disabled:opacity-30 transition"
-            >
-              <ArrowUp className="w-4 h-4" />
-            </button>
-          </form>
-
-          {/* Built from the notes on this device; one swipeable row on phones, wrapping on wider screens */}
-          {examples.length > 0 && (
-            <div className="scroll-x flex sm:flex-wrap gap-2 mt-4 -mx-6 px-6 sm:mx-0 sm:px-0">
-              {examples.map((q) => (
-                <button
-                  key={q}
-                  type="button"
-                  onClick={(e) => ask(e, q)}
-                  className="shrink-0 h-8 px-3 rounded-full bg-white/[0.07] ring-1 ring-inset ring-white/10 text-xs font-medium text-white/75 hover:bg-white/15 hover:text-white transition"
-                >
-                  {q}
-                </button>
-              ))}
+          {DEMO_MODE ? (
+            // The hosted demo has no on-device LLM, so asking is switched off there
+            <div className="mt-6 max-w-2xl flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl bg-hero/[0.05] ring-1 ring-inset ring-hero/15 px-4 py-3.5">
+              <Info className="w-5 h-5 text-warn shrink-0" />
+              <p className="flex-1 text-sm text-hero/80">
+                <span className="font-semibold text-hero">Asking questions is off in this AWS demo.</span> It runs without
+                the on-device AI (local LLM). Run EdgeVault locally to try the assistant.
+              </p>
+              <a
+                href={LOCAL_SETUP_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 inline-flex items-center justify-center gap-1.5 h-9 px-3.5 rounded-xl bg-fg text-bg text-sm font-medium hover:bg-fg/85 transition"
+              >
+                Run it locally
+                <ArrowUpRight className="w-4 h-4" />
+              </a>
             </div>
+          ) : (
+            <>
+              <form onSubmit={ask} className="relative mt-6 max-w-2xl">
+                <Sparkles className="w-5 h-5 text-zinc-400 absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
+                <input
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  placeholder="Ask anything about your equipment…"
+                  aria-label="Ask a question"
+                  className="w-full h-14 rounded-2xl bg-white text-zinc-900 placeholder:text-zinc-500 pl-12 pr-16 text-[15px] shadow-lg outline-none ring-1 ring-hero/10 focus:ring-4 focus:ring-hero/15 transition"
+                />
+                <button
+                  type="submit"
+                  disabled={!question.trim()}
+                  aria-label="Ask"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl bg-zinc-900 text-white flex items-center justify-center hover:bg-zinc-700 disabled:opacity-30 transition"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </button>
+              </form>
+
+              {/* Built from the notes on this device; one swipeable row on phones, wrapping on wider screens */}
+              {examples.length > 0 && (
+                <div className="scroll-x flex sm:flex-wrap gap-2 mt-4 -mx-6 px-6 sm:mx-0 sm:px-0">
+                  {examples.map((q) => (
+                    <button
+                      key={q}
+                      type="button"
+                      onClick={(e) => ask(e, q)}
+                      className="shrink-0 h-8 px-3 rounded-full bg-hero/[0.06] ring-1 ring-inset ring-hero/10 text-xs font-medium text-hero/75 hover:bg-hero/[0.12] hover:text-hero transition"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </div>
       </section>

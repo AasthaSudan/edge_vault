@@ -35,6 +35,8 @@ module.exports = {
         shared: token("shared"),
         private: token("private"),
         temp: token("temp"),
+        // Text and tints on the Home banner (dark ink on the light banner, white on the dark one)
+        hero: token("hero-ink"),
       },
       boxShadow: {
         card: "0 1px 2px rgb(var(--shadow) / 0.05), 0 1px 3px rgb(var(--shadow) / 0.04)",

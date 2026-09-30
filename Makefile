@@ -77,15 +77,15 @@ lint-imports:
 
 eval-gate:
 	@echo "Running the AI Memory Gate evaluation suite..."
-	PYTHONPATH=edge $(PYTHON) edge/tests/eval_gate.py
+	PYTHONPATH=edge $(PYTHON) edge/evals/eval_gate.py
 
 eval-assistant:
 	@echo "Running the On-Device Assistant evaluation (needs Ollama)..."
-	PYTHONPATH=edge $(PYTHON) edge/tests/eval_assistant.py
+	PYTHONPATH=edge $(PYTHON) edge/evals/eval_assistant.py
 
 eval-reconcile:
 	@echo "Running the conflict reconciliation evaluation (needs Ollama)..."
-	PYTHONPATH=edge $(PYTHON) edge/tests/eval_reconcile.py
+	PYTHONPATH=edge $(PYTHON) edge/evals/eval_reconcile.py
 
 test-integration:
 	@echo "Running integration tests (PII, dedup, override)..."

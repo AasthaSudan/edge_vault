@@ -1,7 +1,7 @@
 """Conflict reconciliation eval: does the on-device LLM tell a progression over time from a
 genuine contradiction and from the same fact reworded? Needs Ollama running.
 
-Usage: PYTHONPATH=edge python edge/tests/eval_reconcile.py
+Usage: PYTHONPATH=edge python edge/evals/eval_reconcile.py
 """
 import os
 import sys
