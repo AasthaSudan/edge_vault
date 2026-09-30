@@ -1,255 +1,171 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CloudOff, CloudUpload, CheckCircle2, RefreshCw, ChevronDown, ArrowRight } from "lucide-react";
 import { fetchEdge } from "@/lib/api";
-import { ServerStatsCard } from "@/components/ServerStatsCard";
-import {
-  RefreshCw,
-  Clock,
-  Send,
-  Download,
-  AlertCircle,
-  CheckCircle2,
-} from "lucide-react";
+import { errorDetail, plural, timeAgo } from "@/lib/format";
+import { useToast } from "@/components/Providers";
+import { PrivacyCheck } from "@/components/PrivacyCheck";
+import { PageHeader, cn } from "@/components/ui";
+
+const QUEUE_STATUS: Record<string, { label: string; cls: string }> = {
+  pending: { label: "Waiting", cls: "text-warn" },
+  inflight: { label: "Sending", cls: "text-accent" },
+  done: { label: "Sent", cls: "text-muted" },
+};
 
 export default function SyncPage() {
   const qc = useQueryClient();
-  const [syncMessage, setSyncMessage] = React.useState<{ type: "success" | "info" | "warning"; text: string } | null>(null);
+  const toast = useToast();
+  const [showQueue, setShowQueue] = useState(false);
 
-  const { data: syncStatus, isLoading: statusLoading } = useQuery({
+  const { data: status } = useQuery({
     queryKey: ["sync-status"],
     queryFn: () => fetchEdge("/sync/status"),
     refetchInterval: 2500,
   });
-
-  const { data: outboxRows, isLoading: outboxLoading } = useQuery({
+  const { data: queue } = useQuery({
     queryKey: ["outbox"],
     queryFn: () => fetchEdge("/sync/outbox"),
     refetchInterval: 2500,
+    enabled: showQueue,
   });
 
-  const syncNowMutation = useMutation({
+  const syncNow = useMutation({
     mutationFn: () => fetchEdge("/sync/now", { method: "POST" }),
     onSuccess: (data: any) => {
-      qc.invalidateQueries({ queryKey: ["sync-status"] });
-      qc.invalidateQueries({ queryKey: ["outbox"] });
-      qc.invalidateQueries({ queryKey: ["cloud-stats"] });
-      qc.invalidateQueries({ queryKey: ["memories"] });
-
-      if (data?.status === "skipped") {
-        setSyncMessage({ type: "warning", text: `Sync skipped: ${data.reason || "Device offline"}` });
-      } else if (data?.pushed > 0) {
-        setSyncMessage({ type: "success", text: `Success! Pushed ${data.pushed} pending memory to central fleet and pulled latest updates.` });
-      } else {
-        setSyncMessage({ type: "info", text: "Fleet is completely up-to-date! (0 pending records in outbox)." });
-      }
+      ["sync-status", "outbox", "cloud-stats", "memories"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      if (data?.status === "skipped") return toast("Couldn't sync. This device is offline.", "info");
+      // pushed is a count; pulled is whether fetching the team's changes succeeded
+      const sent = data?.pushed > 0 ? `Sent ${plural(data.pushed, "note")} to your team.` : "";
+      if (data?.pulled === false) toast(`${sent} Couldn't get your team's latest changes.`.trim(), "error");
+      else toast(sent ? `Synced. ${sent}` : "Up to date with your team");
     },
-    onError: (err: any) => {
-      setSyncMessage({ type: "warning", text: `Sync error: ${err.message || "Failed to reach server"}` });
-    },
+    onError: (err) => toast(`Sync failed: ${errorDetail(err)}`, "error"),
   });
 
+  const goOnline = useMutation({
+    mutationFn: () => fetchEdge("/sync/offline?on=false", { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["sync-status"] }),
+  });
+
+  const offline = !!status?.forced_offline;
+  const waiting = status?.outbox_depth ?? 0;
+
+  const hero = offline
+    ? {
+        icon: CloudOff,
+        tone: "bg-warn/10 text-warn",
+        title: "You're offline",
+        body: waiting
+          ? `${plural(waiting, "note")} will sync as soon as you're back online.`
+          : "New shared notes will sync as soon as you're back online.",
+      }
+    : waiting > 0
+    ? {
+        icon: CloudUpload,
+        tone: "bg-accent/10 text-accent",
+        title: `${plural(waiting, "note")} waiting to sync`,
+        body: "They'll be sent automatically in a moment, or you can sync now.",
+      }
+    : {
+        icon: CheckCircle2,
+        tone: "bg-ok/10 text-ok",
+        title: "Everything is up to date",
+        body: "Your shared notes match your team's.",
+      };
+  const Icon = hero.icon;
+
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
-              Synchronization &amp; Fleet Status
-            </h1>
-            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">
-              Push-Before-Pull
-            </span>
+    <div className="space-y-6">
+      <PageHeader title="Sync" description="Keep your shared notes in step with your team." />
+
+      <div className="card p-6">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+          <div className={cn("w-11 h-11 rounded-full flex items-center justify-center shrink-0", hero.tone)}>
+            <Icon className="w-5 h-5" />
           </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Durable SQLite outbox queue, background sync worker, and live cloud verification audit.
-          </p>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg font-semibold tracking-tight">{hero.title}</h2>
+            <p className="text-sm text-muted mt-0.5">{hero.body}</p>
+          </div>
+          {offline ? (
+            <button onClick={() => goOnline.mutate()} disabled={goOnline.isPending} className="btn btn-primary">
+              Go online
+            </button>
+          ) : (
+            <button
+              onClick={() => syncNow.mutate()}
+              disabled={syncNow.isPending}
+              className={waiting > 0 ? "btn btn-primary" : "btn btn-secondary"}
+            >
+              <RefreshCw className={cn("w-4 h-4", syncNow.isPending && "animate-spin")} />
+              {syncNow.isPending ? "Syncing…" : "Sync now"}
+            </button>
+          )}
         </div>
 
-        <button
-          onClick={() => syncNowMutation.mutate()}
-          disabled={syncNowMutation.isPending || syncStatus?.forced_offline}
-          className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors disabled:opacity-40 self-start sm:self-auto cursor-pointer shadow-xs"
-        >
-          <RefreshCw
-            className={`w-3.5 h-3.5 ${
-              syncNowMutation.isPending ? "animate-spin" : ""
-            }`}
-          />
-          <span>{syncNowMutation.isPending ? "Syncing Fleet..." : "Sync Fleet Now"}</span>
-        </button>
+        <div className="flex flex-wrap gap-x-8 gap-y-2 mt-6 pt-5 border-t border-line text-sm">
+          <div>
+            <span className="text-muted">Last sent </span>
+            {timeAgo(status?.last_push_at)}
+          </div>
+          <div>
+            <span className="text-muted">Last received </span>
+            {timeAgo(status?.last_pull_at)}
+          </div>
+        </div>
       </div>
 
-      {/* Sync Status Banner */}
-      {syncMessage && (
-        <div
-          className={`flex items-center justify-between p-3.5 rounded-lg border text-xs font-mono transition-all ${
-            syncMessage.type === "success"
-              ? "bg-emerald-950/30 border-emerald-800/40 text-emerald-400"
-              : syncMessage.type === "warning"
-              ? "bg-amber-950/30 border-amber-800/40 text-amber-400"
-              : "bg-sky-950/30 border-sky-800/40 text-sky-300"
-          }`}
+      <PrivacyCheck detailed />
+
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setShowQueue((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
         >
-          <div className="flex items-center gap-2">
-            {syncMessage.type === "success" ? (
-              <CheckCircle2 className="w-4 h-4 text-emerald-400" />
-            ) : (
-              <AlertCircle className="w-4 h-4 text-sky-400" />
-            )}
-            <span>{syncMessage.text}</span>
+          <ChevronDown className={cn("w-4 h-4 transition-transform", !showQueue && "-rotate-90")} />
+          {showQueue ? "Hide details" : "Show details"}
+        </button>
+        <Link href="/activity" className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
+          Activity log
+          <ArrowRight className="w-4 h-4" />
+        </Link>
+      </div>
+
+      {showQueue && (
+        <div className="card overflow-hidden animate-fade-in">
+          <div className="px-5 py-3 border-b border-line text-xs text-muted">
+            Recent changes sent to your team. The queue is saved on disk, so nothing is lost if the device restarts.
           </div>
-          <button
-            onClick={() => setSyncMessage(null)}
-            className="text-slate-400 hover:text-white text-[11px] underline ml-4 cursor-pointer"
-          >
-            Dismiss
-          </button>
+          {!Array.isArray(queue) || queue.length === 0 ? (
+            <p className="px-5 py-8 text-center text-sm text-muted">No recent changes.</p>
+          ) : (
+            <ul className="divide-y divide-line">
+              {queue.map((row: any) => {
+                // A failed send goes back to pending with its attempt count raised
+                const s =
+                  row.status === "pending" && row.attempts > 0
+                    ? { label: "Retrying", cls: "text-danger" }
+                    : QUEUE_STATUS[row.status] ?? { label: row.status, cls: "text-muted" };
+                return (
+                  <li key={row.id} className="flex items-center gap-4 px-5 py-3 text-sm">
+                    <span className="w-20 shrink-0">{row.op === "delete" ? "Removal" : "Update"}</span>
+                    <span className="flex-1 min-w-0 truncate font-mono text-xs text-muted" title={row.memory_id}>
+                      {row.memory_id.slice(0, 8)}
+                      {row.last_error && <span className="text-danger font-sans ml-2">{row.last_error}</span>}
+                    </span>
+                    <span className="hidden sm:block text-xs text-muted w-24 text-right">{timeAgo(row.created_at)}</span>
+                    <span className={cn("text-xs font-medium w-16 text-right", s.cls)}>{s.label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
-
-      {/* Cloud Proof of Privacy Panel */}
-      <ServerStatsCard />
-
-      {/* Sync Timeline & Worker Diagnostics */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="panel p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-1 text-xs">
-            <Send className="w-3.5 h-3.5 text-sky-400" />
-            <span>Last Fleet Push</span>
-          </div>
-          <div className="text-sm font-semibold font-mono text-white mt-1">
-            {syncStatus?.last_push_at
-              ? new Date(Number(syncStatus.last_push_at)).toLocaleTimeString()
-              : "Never"}
-          </div>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">
-            Pushes pending outbox batches
-          </span>
-        </div>
-
-        <div className="panel p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-1 text-xs">
-            <Download className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Last Fleet Pull</span>
-          </div>
-          <div className="text-sm font-semibold font-mono text-white mt-1">
-            {syncStatus?.last_pull_at
-              ? new Date(Number(syncStatus.last_pull_at)).toLocaleTimeString()
-              : "Never"}
-          </div>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">
-            Pulls partial delta snapshots
-          </span>
-        </div>
-
-        <div className="panel p-4">
-          <div className="flex items-center gap-2 text-slate-400 mb-1 text-xs">
-            <Clock className="w-3.5 h-3.5 text-amber-400" />
-            <span>Outbox Depth</span>
-          </div>
-          <div className="text-sm font-semibold font-mono text-white mt-1">
-            {syncStatus?.outbox_depth ?? 0} items
-          </div>
-          <span className="text-[10px] text-slate-500 mt-0.5 block">
-            Queued for transmission
-          </span>
-        </div>
-      </div>
-
-      {/* Outbox Queue Inspector */}
-      <div className="panel overflow-hidden">
-        <div className="p-4 border-b border-border flex items-center justify-between">
-          <div>
-            <h3 className="text-xs font-mono font-semibold uppercase tracking-wider text-slate-300">
-              Local Outbox Queue (edge.db)
-            </h3>
-            <p className="text-[11px] text-slate-500 mt-0.5">
-              Durable SQLite table that survives crashes and restarts. Drained only when online.
-            </p>
-          </div>
-          <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400">
-            {outboxRows?.length ?? 0} entries
-          </span>
-        </div>
-
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
-            <thead>
-              <tr className="border-b border-border bg-slate-900/50 font-mono text-slate-400 uppercase text-[10px] tracking-wider">
-                <th className="p-3 w-16">ID</th>
-                <th className="p-3">Memory ID</th>
-                <th className="p-3 w-24">Operation</th>
-                <th className="p-3 w-28">Status</th>
-                <th className="p-3 w-24">Version</th>
-                <th className="p-3 w-24">Attempts</th>
-                <th className="p-3 w-36">Enqueued</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border font-mono text-[11px]">
-              {outboxLoading ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">
-                    Loading outbox...
-                  </td>
-                </tr>
-              ) : !outboxRows || outboxRows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="p-6 text-center text-slate-500">
-                    Outbox is empty. All shareable memories have synced!
-                  </td>
-                </tr>
-              ) : (
-                outboxRows.map((row: any) => (
-                  <tr key={row.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="p-3 font-semibold text-slate-200">#{row.id}</td>
-                    <td className="p-3 text-slate-400 truncate max-w-xs">
-                      {row.memory_id}
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase border ${
-                          row.op === "upsert"
-                            ? "bg-sky-950/30 text-sky-400 border-sky-800/40"
-                            : "bg-rose-950/30 text-rose-400 border-rose-800/40"
-                        }`}
-                      >
-                        {row.op}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <span
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium border ${
-                          row.status === "done"
-                            ? "bg-emerald-950/30 text-emerald-400 border-emerald-800/40"
-                            : row.status === "pending"
-                            ? "bg-amber-950/30 text-amber-400 border-amber-800/40"
-                            : row.status === "inflight"
-                            ? "bg-purple-950/30 text-purple-400 border-purple-800/40"
-                            : "bg-rose-950/30 text-rose-400 border-rose-800/40"
-                        }`}
-                      >
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="p-3 text-slate-400">
-                      v{row.version} (base {row.base_version})
-                    </td>
-                    <td className="p-3 text-slate-400">{row.attempts}</td>
-                    <td className="p-3 text-slate-400">
-                      {row.created_at
-                        ? new Date(Number(row.created_at)).toLocaleTimeString()
-                        : "—"}
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
     </div>
   );
 }

@@ -1,60 +1,134 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* Light theme (default) */
 :root {
-  --foreground-rgb: 241, 245, 249;
-  --background-rgb: 9, 13, 22;
+  --bg: 250 250 250;
+  --surface: 255 255 255;
+  --subtle: 244 244 245;
+  --line: 228 228 231;
+  --line-strong: 212 212 216;
+  --fg: 24 24 27;
+  --muted: 113 113 122;
+  --faint: 161 161 170;
+  --accent: 37 99 235;
+  --ok: 22 163 74;
+  --warn: 217 119 6;
+  --danger: 220 38 38;
+  --private: 124 58 237;
+  color-scheme: light;
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background-color: rgb(var(--background-rgb));
-  /* Natural, subtle engineering grid overlay */
-  background-image: 
-    linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-  background-size: 32px 32px;
-  min-height: 100vh;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  letter-spacing: -0.011em;
-  overflow-x: hidden;
+/* Dark theme: follows the system unless the user picked light, or forced dark */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: 9 9 11;
+    --surface: 19 19 22;
+    --subtle: 30 30 34;
+    --line: 39 39 42;
+    --line-strong: 63 63 70;
+    --fg: 244 244 245;
+    --muted: 161 161 170;
+    --faint: 113 113 122;
+    --accent: 96 165 250;
+    --ok: 74 222 128;
+    --warn: 251 191 36;
+    --danger: 248 113 113;
+    --private: 167 139 250;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: 9 9 11;
+  --surface: 19 19 22;
+  --subtle: 30 30 34;
+  --line: 39 39 42;
+  --line-strong: 63 63 70;
+  --fg: 244 244 245;
+  --muted: 161 161 170;
+  --faint: 113 113 122;
+  --accent: 96 165 250;
+  --ok: 74 222 128;
+  --warn: 251 191 36;
+  --danger: 248 113 113;
+  --private: 167 139 250;
+  color-scheme: dark;
 }
 
-/* Subtle, clean card styling */
-.panel {
-  background-color: #0f172a;
-  border: 1px solid #1e293b;
-  border-radius: 0.75rem;
+@layer base {
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-feature-settings: "cv11", "ss01";
+  }
+  ::selection {
+    @apply bg-accent/20;
+  }
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent/40 ring-offset-0;
+  }
 }
 
-.panel-hover {
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-.panel-hover:hover {
-  border-color: #334155;
-  background-color: #111b33;
+@layer components {
+  .card {
+    @apply bg-surface border border-line rounded-xl;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 h-9 px-3.5 rounded-lg text-sm font-medium whitespace-nowrap
+      transition-colors select-none disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .btn-sm {
+    @apply h-8 px-3 text-[13px];
+  }
+  .btn-primary {
+    @apply bg-fg text-bg hover:bg-fg/85;
+  }
+  .btn-secondary {
+    @apply bg-surface text-fg border border-line hover:bg-subtle;
+  }
+  .btn-ghost {
+    @apply text-muted hover:text-fg hover:bg-subtle;
+  }
+  .btn-icon {
+    @apply inline-flex items-center justify-center w-8 h-8 rounded-lg text-muted hover:text-fg hover:bg-subtle transition-colors;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-line bg-surface px-3 h-10 text-sm text-fg placeholder:text-faint
+      outline-none transition-colors focus:border-accent/60 focus:ring-4 focus:ring-accent/10;
+  }
+  textarea.input {
+    @apply h-auto py-2.5 leading-relaxed resize-none;
+  }
+  .label {
+    @apply block text-[13px] font-medium text-fg mb-1.5;
+  }
+
+  .tag {
+    @apply inline-flex items-center rounded-md border border-line bg-subtle px-1.5 py-px text-xs font-medium text-muted;
+  }
+
+  /* Horizontally swipeable row (filter chips on phones) without a visible scrollbar */
+  .scroll-x {
+    @apply overflow-x-auto;
+    scrollbar-width: none;
+  }
+  .scroll-x::-webkit-scrollbar {
+    display: none;
+  }
 }
 
-/* Custom scrollbars */
+/* Quiet scrollbars */
 ::-webkit-scrollbar {
-  width: 5px;
-  height: 5px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #1e293b;
-  border-radius: 4px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #334155;
-}
-
-code, pre, .font-mono {
-  font-family: 'JetBrains Mono', monospace;
-  letter-spacing: -0.02em;
+  background: rgb(var(--line-strong));
+  border-radius: 8px;
+  border: 2px solid rgb(var(--bg));
 }

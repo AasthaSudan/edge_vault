@@ -1,66 +1,38 @@
 "use client";
 
 import React from "react";
-import Link from "next/link";
 import { Source } from "@/lib/stream";
+import { category } from "@/lib/format";
+import { cn } from "./ui";
 
-interface CitationChipProps {
+// Inline numbered reference inside an answer; opens the source it points to.
+export function CitationChip({
+  n,
+  source,
+  onClick,
+}: {
   n: number;
   source?: Source;
-  onClick?: (source?: Source) => void;
-}
-
-export const CitationChip: React.FC<CitationChipProps> = ({ n, source, onClick }) => {
-  const category = source?.category || "shareable";
-  const origin = source?.origin || "this device";
-
-  const getBadgeStyle = () => {
-    switch (category) {
-      case "private":
-        return "bg-rose-950/40 border-rose-800/50 text-rose-300 hover:bg-rose-900/50";
-      case "routine":
-        return "bg-slate-800/50 border-slate-700/50 text-slate-400 hover:bg-slate-700/50";
-      case "shareable":
-      default:
-        if (source?.fleet_verified) {
-          return "bg-emerald-950/40 border-emerald-700/60 text-emerald-300 hover:bg-emerald-900/50";
-        }
-        return "bg-sky-950/40 border-sky-800/50 text-sky-300 hover:bg-sky-900/50";
-    }
-  };
-
-  const verifiedBy = source?.corroborated_by?.length ?? 0;
-  const label =
-    category === "private"
-      ? "Private"
-      : category === "routine"
-      ? "Routine"
-      : source?.fleet_verified
-      ? `Fleet verified · ${verifiedBy} devices`
-      : `Fleet · ${origin}`;
-
-  if (onClick) {
-    return (
-      <button
-        type="button"
-        onClick={() => onClick(source)}
-        title={source?.title ? `${source.title} (${category})` : `Note #${n}`}
-        className={`inline-flex items-center gap-1 px-1.5 py-0.2 mx-0.5 rounded text-[11px] font-mono border font-medium cursor-pointer transition-colors ${getBadgeStyle()}`}
-      >
-        <span>[{n}]</span>
-        <span className="text-[10px] opacity-80">{label}</span>
-      </button>
-    );
-  }
+  onClick: (source: Source) => void;
+}) {
+  const c = category(source?.category);
+  const title = source
+    ? `${source.title || "Untitled note"} · ${c.label}${source.fleet_verified ? " · confirmed by other devices" : ""}`
+    : `Source ${n}`;
 
   return (
-    <Link
-      href={`/memories?id=${source?.memory_id || ""}`}
-      title={source?.title ? `${source.title} (${category})` : `Note #${n}`}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.2 mx-0.5 rounded text-[11px] font-mono border font-medium cursor-pointer transition-colors ${getBadgeStyle()}`}
+    <button
+      type="button"
+      disabled={!source}
+      onClick={() => source && onClick(source)}
+      title={title}
+      className={cn(
+        "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 rounded-md align-[2px]",
+        "text-[11px] font-semibold leading-none bg-subtle border border-line transition-colors hover:border-line-strong",
+        c.text
+      )}
     >
-      <span>[{n}]</span>
-      <span className="text-[10px] opacity-80">{label}</span>
-    </Link>
+      {n}
+    </button>
   );
-};
+}
