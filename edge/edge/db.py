@@ -24,11 +24,21 @@ def fetch_all(sql: str, params: tuple = ()) -> list:
         cur = _conn.execute(sql, params)
         return cur.fetchall()
 
+MIGRATIONS = [
+    # (table, column, DDL) — columns added after a device's database was first created
+    ("conflicts", "analysis_json", "ALTER TABLE conflicts ADD COLUMN analysis_json TEXT"),
+]
+
+
 def init():
     schema_path = Path(__file__).parent / "schema.sql"
     with open(schema_path, "r", encoding="utf-8") as f:
         with _lock:
             _conn.executescript(f.read())
+            for table, column, ddl in MIGRATIONS:
+                cols = {r[1] for r in _conn.execute(f"PRAGMA table_info({table})").fetchall()}
+                if column not in cols:
+                    _conn.execute(ddl)
 
 # Auto-initialize on import so tables exist immediately
 init()

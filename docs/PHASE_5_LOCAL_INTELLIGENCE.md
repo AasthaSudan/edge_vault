@@ -219,3 +219,14 @@ Measured on the demo laptop (Ryzen 5 5600H, 15.4 GB RAM, CPU only, Ollama 0.34.4
 
 - Rehearsals: the demo's final step retracts a note, which is stored as a correction, so a second run on the same device correctly vetoes it. Reset (`make reset`) or use a fresh `DEVICE_ID` between rehearsals.
 - Recommended Ollama settings (set once in Windows, then restart Ollama): `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_KEEP_ALIVE=30m`.
+
+### 5.5 Conflict reconciliation & fleet corroboration (added 1 Oct 2026)
+
+| Feature | Result |
+|---|---|
+| LLM conflict reconciliation (`tests/eval_reconcile.py`, 8 pairs) | 8/8 progression / contradiction / same-fact after deterministic value + opposite-instruction checks (the 1.5B model alone missed number disagreements). Small set, partly used during development. ~5 s per conflict, cached after the first run |
+| Real conflict through the APIs | Device B's stale "12 bar" edit vs device A's "10 bar": flagged *genuine contradiction*, "12 bar vs 10 bar" chip, Merge recommended |
+| Cross-device corroboration (`tests/test_sync.py` step 10 + live API run) | Same fix reported by two devices is `fleet_verified` on the cloud and on both devices; a report with a different value is not counted |
+| Assistant | Cited verified notes get a data-derived line: "[1] is fleet verified: reported independently by 2 devices (…)" |
+
+Bug found while testing: the cloud treated *another device's* edit at the same version number as an idempotent retry and silently dropped it (`tests/test_sync.py` step 11). A retry now has to match the stored content.

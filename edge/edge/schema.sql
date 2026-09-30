@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS outbox (
     point_json TEXT NOT NULL,
     version INTEGER NOT NULL,
     base_version INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending', -- pending | inflight | done | failed
+    status TEXT NOT NULL DEFAULT 'pending', -- pending | inflight | done | failed | cancelled (superseded by a retraction)
     attempts INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
     created_at INTEGER NOT NULL
@@ -28,7 +28,8 @@ CREATE TABLE IF NOT EXISTS conflicts (
     remote_json TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'open', -- open | resolved
     resolution TEXT, -- keep_local | keep_remote | merged
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    analysis_json TEXT -- cached on-device LLM reconciliation (see assistant/reconcile.py)
 );
 
 CREATE TABLE IF NOT EXISTS settings (

@@ -26,7 +26,7 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
             params = {"since_ts": since_ts, "limit": 100}
             if offset:
                 params["offset"] = offset
-            r = await client.get(f"{settings.sync_api_url}/pull/records", params=params, timeout=10)
+            r = await client.get(f"{settings.sync_api_url}/pull/records", params=params, headers=settings.cloud_headers(), timeout=10)
             if r.status_code != 200:
                 return False
             data = r.json()
@@ -61,13 +61,16 @@ async def pull_once(client: httpx.AsyncClient) -> bool:
 def _local_versions(ids: list) -> dict:
     with shared.lock:
         try:
-            return {str(r.id): r.payload.get("version", 0) for r in shared.shard.retrieve(ids, True, False)}
+            return {str(r.id): r.payload for r in shared.shard.retrieve(ids, True, False)}
         except Exception:
             return {}
 
 
+CORROBORATION_FIELDS = ("corroborated_by", "corroboration_count", "fleet_verified")
+
+
 def _apply(records: list[dict]) -> None:
-    points = []
+    points, verdicts = [], []
     local = _local_versions([r["id"] for r in records])
     for item in records:
         pl = item.get("payload", {})
@@ -77,7 +80,11 @@ def _apply(records: list[dict]) -> None:
 
         # Our own note: skip only if we still hold it at the same or a newer version.
         # If the local copy is missing (e.g. lost in a crash), restore it from the fleet.
-        if pl.get("device_id") == settings.device_id and local.get(str(item["id"]), -1) >= pl.get("version", 0):
+        mine = local.get(str(item["id"]))
+        if pl.get("device_id") == settings.device_id and mine is not None and mine.get("version", 0) >= pl.get("version", 0):
+            # ...but still take the fleet's verdict on it: other devices may have corroborated it
+            if "corroborated_by" in pl and pl.get("corroborated_by") != mine.get("corroborated_by"):
+                verdicts.append((item["id"], {k: pl[k] for k in CORROBORATION_FIELDS if k in pl}))
             continue
 
         v = item.get("vector") or {}
@@ -98,3 +105,6 @@ def _apply(records: list[dict]) -> None:
         # One update per page = one flush to disk, not one per record
         with shared.lock:
             shared.shard.update(UpdateOperation.upsert_points(points))
+    for point_id, fields in verdicts:
+        with shared.lock:
+            shared.shard.update(UpdateOperation.set_payload([point_id], fields))

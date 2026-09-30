@@ -1,145 +1,136 @@
 "use client";
 
 import React, { useState } from "react";
-import { useEdgeEvents } from "@/lib/sse";
+import Link from "next/link";
+import { Activity, ArrowLeft, ChevronRight } from "lucide-react";
+import { useEdgeEvents, EdgeEvent } from "@/lib/sse";
 import { EDGE_API } from "@/lib/api";
-import {
-  Activity,
-  Radio,
-  Filter,
-  Trash2,
-  Cpu,
-  Layers,
-  CheckCircle,
-  AlertTriangle,
-  RotateCw,
-} from "lucide-react";
+import { category } from "@/lib/format";
+import { EmptyState, PageHeader, Segmented, cn } from "@/components/ui";
+
+type Group = "all" | "notes" | "privacy" | "sync" | "conflicts" | "assistant";
+
+const GROUPS: Record<Exclude<Group, "all">, { prefixes: string[]; dot: string }> = {
+  notes: { prefixes: ["memory.", "dedup.", "ttl."], dot: "bg-accent" },
+  privacy: { prefixes: ["gate.", "privacy.", "share."], dot: "bg-private" },
+  sync: { prefixes: ["sync."], dot: "bg-ok" },
+  conflicts: { prefixes: ["conflict."], dot: "bg-warn" },
+  assistant: { prefixes: ["assistant."], dot: "bg-faint" },
+};
+
+const LABEL: Record<string, string> = {
+  "memory.created": "Note saved",
+  "memory.updated": "Note updated",
+  "memory.deleted": "Note deleted",
+  "dedup.merged": "Merged with a similar note",
+  "ttl.expired": "Temporary note expired",
+  "gate.decided": "Visibility decided",
+  "gate.overridden": "Visibility changed",
+  "gate.error": "Privacy check failed",
+  "privacy.blocked": "Private info blocked from leaving",
+  "share.suggested": "New share suggestion",
+  "share.approved": "Suggestion shared",
+  "share.rejected": "Suggestion kept private",
+  "share.rejected_auto": "Suggestion discarded automatically",
+  "sync.offline": "Went offline",
+  "sync.online": "Back online",
+  "sync.push.ok": "Sent changes to your team",
+  "sync.push.failed": "Couldn't send changes",
+  "sync.pull.ok": "Received team updates",
+  "sync.pull.skipped": "Skipped fetching updates",
+  "conflict.opened": "Conflict found",
+  "conflict.analyzed": "Conflict compared by AI",
+  "conflict.resolved": "Conflict resolved",
+  "assistant.answered": "Question answered",
+  "stream.connected": "Live log connected",
+};
+
+function groupOf(type: string) {
+  return (Object.keys(GROUPS) as (keyof typeof GROUPS)[]).find((g) =>
+    GROUPS[g].prefixes.some((p) => type.startsWith(p))
+  );
+}
+
+function detail(ev: EdgeEvent) {
+  const d = ev.data || {};
+  if (d.category && (ev.type.startsWith("gate.") || ev.type.startsWith("memory."))) {
+    return `${category(d.category).label}${d.reason ? ` · ${d.reason}` : ""}`;
+  }
+  return d.reason || d.detail || d.error || "";
+}
 
 export default function ActivityPage() {
-  const events = useEdgeEvents(EDGE_API);
-  const [filterType, setFilterType] = useState<string>("all");
+  const { events, connected } = useEdgeEvents(EDGE_API);
+  const [group, setGroup] = useState<Group>("all");
 
-  const filteredEvents = events.filter((ev) => {
-    if (filterType === "all") return true;
-    return ev.type.startsWith(filterType);
-  });
-
-  const getEventBadge = (type: string) => {
-    if (type.startsWith("memory.")) {
-      return "bg-sky-500/10 text-sky-400 border-sky-500/20";
-    }
-    if (type.startsWith("gate.")) {
-      return "bg-purple-500/10 text-purple-400 border-purple-500/20";
-    }
-    if (type.startsWith("sync.")) {
-      return "bg-emerald-500/10 text-emerald-400 border-emerald-500/20";
-    }
-    if (type.startsWith("conflict.")) {
-      return "bg-amber-500/10 text-amber-400 border-amber-500/20";
-    }
-    if (type.startsWith("dedup.")) {
-      return "bg-indigo-500/10 text-indigo-400 border-indigo-500/20";
-    }
-    return "bg-muted text-muted-foreground border-border";
-  };
+  const shown = events.filter((ev) => group === "all" || groupOf(ev.type) === group);
 
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
-              Real-Time Activity Stream
-            </h1>
-            <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">
-              SSE Telemetry
-            </span>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            Live Server-Sent Events emitted by the local edge node (:7001/events).
-          </p>
-        </div>
+    <div>
+      <Link href="/sync" className="btn btn-ghost btn-sm -ml-3 mb-4">
+        <ArrowLeft className="w-4 h-4" />
+        Sync
+      </Link>
+      <PageHeader
+        title="Activity"
+        description="A live log of what's happening on this device."
+        actions={
+          <span className="inline-flex items-center gap-2 text-sm text-muted">
+            <span className={cn("w-2 h-2 rounded-full", connected ? "bg-ok animate-pulse" : "bg-faint")} />
+            {connected ? "Live" : "Connecting…"}
+          </span>
+        }
+      />
 
-        <div className="flex items-center gap-2 self-start sm:self-auto">
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-950/30 border border-emerald-800/40 text-emerald-400 text-xs font-mono font-medium">
-            <Radio className="w-3.5 h-3.5 animate-pulse text-emerald-400" />
-            <span>Connected</span>
-          </div>
-        </div>
+      <div className="scroll-x -mx-4 px-4 sm:mx-0 sm:px-0 mb-4">
+        <Segmented<Group>
+          value={group}
+          onChange={setGroup}
+          options={[
+            { value: "all", label: "All" },
+            { value: "notes", label: "Notes" },
+            { value: "privacy", label: "Privacy" },
+            { value: "sync", label: "Sync" },
+            { value: "conflicts", label: "Conflicts" },
+            { value: "assistant", label: "Assistant" },
+          ]}
+        />
       </div>
 
-      {/* Filter Tabs */}
-      <div className="panel p-3 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-1">
-          {["all", "memory", "gate", "sync", "conflict", "dedup"].map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilterType(f)}
-              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${
-                filterType === f
-                  ? "bg-slate-800 text-white font-medium"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/40"
-              }`}
-            >
-              {f.toUpperCase()}
-            </button>
-          ))}
-        </div>
-
-        <span className="text-xs font-mono text-slate-500">
-          Showing {filteredEvents.length} events
-        </span>
-      </div>
-
-      {/* Stream Feed */}
-      <div className="space-y-2.5">
-        {filteredEvents.length === 0 ? (
-          <div className="panel p-12 text-center space-y-2">
-            <Activity className="w-8 h-8 text-slate-600 mx-auto" />
-            <h3 className="text-sm font-semibold text-white">
-              Awaiting Edge Events...
-            </h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              Perform an action (create a note, trigger search, toggle offline mode, or sync) to watch events stream in real time.
-            </p>
-          </div>
-        ) : (
-          filteredEvents.map((ev, i) => (
-            <div
-              key={`${ev.ts}-${i}`}
-              className="panel p-3.5 font-mono text-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3"
-            >
-              <div className="space-y-1.5">
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium uppercase border ${getEventBadge(
-                      ev.type
-                    )}`}
-                  >
-                    {ev.type}
-                  </span>
-                  {ev.memory_id && (
-                    <span className="text-slate-500 text-[10px] truncate max-w-xs">
-                      mid: {ev.memory_id}
+      {shown.length === 0 ? (
+        <EmptyState icon={Activity} title="Waiting for activity">
+          Save a note, ask a question or sync, and it will show up here as it happens.
+        </EmptyState>
+      ) : (
+        <ul className="card divide-y divide-line">
+          {shown.map((ev, i) => {
+            const g = groupOf(ev.type);
+            const hasData = ev.data && Object.keys(ev.data).length > 0;
+            return (
+              <li key={`${ev.ts}-${i}`} className="first:rounded-t-xl last:rounded-b-xl">
+                <details className="group">
+                  <summary className="flex items-center gap-3 px-5 py-3 cursor-pointer list-none hover:bg-subtle/60 [&::-webkit-details-marker]:hidden">
+                    <span className={cn("w-2 h-2 rounded-full shrink-0", g ? GROUPS[g].dot : "bg-faint")} />
+                    <span className="flex-1 min-w-0 truncate">
+                      <span className="text-sm">{LABEL[ev.type] ?? ev.type}</span>
+                      {detail(ev) && <span className="text-sm text-muted"> · {detail(ev)}</span>}
                     </span>
-                  )}
-                </div>
-
-                {ev.data && Object.keys(ev.data).length > 0 && (
-                  <pre className="text-[11px] text-slate-300 bg-slate-950 p-2.5 rounded border border-slate-800/80 overflow-x-auto leading-relaxed">
-                    {JSON.stringify(ev.data, null, 2)}
-                  </pre>
-                )}
-              </div>
-
-              <span className="text-[10px] text-slate-500 shrink-0 self-start">
-                {new Date(ev.ts).toLocaleTimeString()}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
+                    <time className="text-xs text-muted tabular-nums shrink-0">
+                      {new Date(ev.ts).toLocaleTimeString()}
+                    </time>
+                    <ChevronRight className="w-4 h-4 text-faint transition-transform group-open:rotate-90 shrink-0" />
+                  </summary>
+                  <div className="px-5 pb-4">
+                    <pre className="text-xs font-mono text-muted bg-subtle rounded-lg p-3 overflow-x-auto">
+                      {JSON.stringify({ type: ev.type, memory_id: ev.memory_id, ...(hasData ? ev.data : {}) }, null, 2)}
+                    </pre>
+                  </div>
+                </details>
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }

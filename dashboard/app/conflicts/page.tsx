@@ -2,247 +2,253 @@
 
 import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, ChevronDown, Loader2, Sparkles } from "lucide-react";
 import { fetchEdge } from "@/lib/api";
-import {
-  AlertTriangle,
-  CheckCircle,
-  GitMerge,
-  ArrowRight,
-  ShieldAlert,
-  Edit3,
-} from "lucide-react";
+import { errorDetail, timeAgo } from "@/lib/format";
+import { useToast } from "@/components/Providers";
+import { ReviewHeader } from "@/components/ReviewTabs";
+import { EmptyState, Skeleton, cn } from "@/components/ui";
+
+type Resolution = "keep_local" | "keep_remote" | "merged";
+
+type Analysis = {
+  relation: "progression" | "contradiction" | "same_fact" | "unknown";
+  explanation: string;
+  recommendation: "keep_local" | "keep_remote" | "merge";
+  merged_text: string;
+  source: string;
+  value_differences?: string[];
+};
+
+const RELATION: Record<string, string> = {
+  progression: "Updated over time",
+  contradiction: "The versions disagree",
+  same_fact: "Same fact, different words",
+};
+
+const SUGGESTS: Record<string, string> = {
+  keep_local: "Suggests keeping your version.",
+  keep_remote: "Suggests keeping the team version.",
+  merge: "Suggests combining them.",
+};
+
+const RESOLVED: Record<string, string> = {
+  keep_local: "Kept your version",
+  keep_remote: "Kept team version",
+  merged: "Combined",
+};
 
 export default function ConflictsPage() {
-  const qc = useQueryClient();
-  const [editingConflictId, setEditingConflictId] = useState<string | null>(null);
-  const [mergedText, setMergedText] = useState<string>("");
-
-  const { data: conflicts, isLoading } = useQuery({
+  const { data, isLoading } = useQuery({
     queryKey: ["conflicts"],
     queryFn: () => fetchEdge("/conflicts"),
     refetchInterval: 3000,
   });
+  const [showResolved, setShowResolved] = useState(false);
 
-  const resolveMutation = useMutation({
-    mutationFn: ({
-      conflictId,
-      resolution,
-      text,
-    }: {
-      conflictId: string;
-      resolution: string;
-      text?: string;
-    }) =>
-      fetchEdge(`/conflicts/${conflictId}/resolve`, {
+  const all: any[] = Array.isArray(data) ? data : [];
+  const open = all.filter((c) => c.status === "open");
+  const resolved = all.filter((c) => c.status !== "open");
+
+  return (
+    <div>
+      <ReviewHeader />
+
+      <p className="text-sm text-muted mb-6 max-w-2xl">
+        When two devices change the same note while offline, choose which version to keep.
+      </p>
+
+      {isLoading ? (
+        <Skeleton rows={2} />
+      ) : open.length === 0 ? (
+        <EmptyState icon={CheckCircle2} title="No conflicts">
+          All your devices agree. Nothing needs a decision.
+        </EmptyState>
+      ) : (
+        <div className="space-y-4">
+          {open.map((c) => (
+            <ConflictCard key={c.id} c={c} />
+          ))}
+        </div>
+      )}
+
+      {resolved.length > 0 && (
+        <div className="mt-10">
+          <button
+            onClick={() => setShowResolved((v) => !v)}
+            className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+          >
+            <ChevronDown className={cn("w-4 h-4 transition-transform", !showResolved && "-rotate-90")} />
+            Resolved ({resolved.length})
+          </button>
+          {showResolved && (
+            <ul className="card divide-y divide-line mt-3 animate-fade-in">
+              {resolved.map((c) => (
+                <li key={c.id} className="flex items-start gap-4 px-5 py-3.5">
+                  <p className="flex-1 min-w-0 text-sm text-muted line-clamp-2">
+                    {c.resolution === "keep_remote" ? c.remote?.text : c.local?.text}
+                  </p>
+                  <span className="text-xs text-muted shrink-0">
+                    {RESOLVED[c.resolution] ?? "Resolved"} · {timeAgo(c.created_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConflictCard({ c }: { c: any }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [merging, setMerging] = useState(false);
+  const [mergedText, setMergedText] = useState("");
+  const local = c.local || {};
+  const remote = c.remote || {};
+
+  // On-device reconciliation, cached by the edge after the first run
+  const { data: a, isFetching } = useQuery<Analysis>({
+    queryKey: ["conflict-analysis", c.id],
+    queryFn: () => fetchEdge(`/conflicts/${c.id}/analyze`, { method: "POST" }),
+    initialData: c.analysis ?? undefined,
+    enabled: !c.analysis,
+    staleTime: Infinity,
+    retry: false,
+  });
+
+  const resolve = useMutation({
+    mutationFn: ({ resolution, text }: { resolution: Resolution; text?: string }) =>
+      fetchEdge(`/conflicts/${c.id}/resolve`, {
         method: "POST",
-        body: JSON.stringify({
-          resolution,
-          merged_text: text || null,
-        }),
+        body: JSON.stringify({ resolution, merged_text: text || null }),
       }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["conflicts"] });
       qc.invalidateQueries({ queryKey: ["memories"] });
       qc.invalidateQueries({ queryKey: ["sync-status"] });
-      setEditingConflictId(null);
-      setMergedText("");
+      toast("Conflict resolved");
     },
+    onError: (err) => toast(errorDetail(err), "error"),
   });
 
+  const understood = a && a.relation !== "unknown" && a.source !== "fallback";
+  const rec = understood ? a.recommendation : undefined;
+  const btn = (r: string) => (rec === r ? "btn btn-primary" : "btn btn-secondary");
+
   return (
-    <div className="space-y-6 max-w-5xl mx-auto">
-      {/* Header */}
-      <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-white">
-            Conflict Resolution Inbox
-          </h1>
-          <span className="px-2 py-0.5 rounded-full bg-slate-800 border border-slate-700 text-slate-300 font-mono text-[10px]">
-            Branch &amp; Merge
-          </span>
-        </div>
-        <p className="text-xs text-slate-400 mt-1">
-          Review version discrepancies and concurrent conflicting edits between offline edge nodes.
-        </p>
+    <article className="card p-5 sm:p-6">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h3 className="text-sm font-semibold truncate">
+          {local.title || remote.title || "A note was changed on two devices"}
+        </h3>
+        <span className="text-xs text-muted shrink-0">{timeAgo(c.created_at)}</span>
       </div>
 
-      {/* Conflict List */}
-      <div className="space-y-4">
-        {isLoading ? (
-          <div className="panel p-12 text-center text-slate-500 text-xs font-mono">
-            Loading conflict inbox...
-          </div>
-        ) : !conflicts || conflicts.length === 0 ? (
-          <div className="panel p-12 text-center space-y-2">
-            <CheckCircle className="w-6 h-6 text-emerald-400 mx-auto" />
-            <h3 className="text-sm font-semibold text-white">
-              Zero Conflicts Detected
-            </h3>
-            <p className="text-xs text-slate-400 max-w-sm mx-auto">
-              All edge devices have converged cleanly or have not encountered concurrent contradictory edits.
+      <div className="grid md:grid-cols-2 gap-3">
+        <Version label="Your version" who={local.author || "You"} text={local.text} />
+        <Version label="Team version" who={remote.author || remote.device_id || "Another device"} text={remote.text} />
+      </div>
+
+      <div className="mt-4">
+        {isFetching && !a ? (
+          <p className="flex items-center gap-2 text-sm text-muted">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            Comparing the two versions on this device…
+          </p>
+        ) : understood ? (
+          <div className="rounded-lg border border-accent/20 bg-accent/5 px-4 py-3">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-accent">
+              <Sparkles className="w-3.5 h-3.5" />
+              AI suggestion{RELATION[a.relation] ? ` · ${RELATION[a.relation]}` : ""}
+            </div>
+            <p className="text-sm mt-1.5 leading-relaxed">
+              {a.explanation} <span className="text-muted">{SUGGESTS[a.recommendation]}</span>
             </p>
-          </div>
-        ) : (
-          conflicts.map((c: any) => {
-            const isOpen = c.status === "open";
-            const local = c.local || {};
-            const remote = c.remote || {};
-            const isEditing = editingConflictId === c.id;
-
-            return (
-              <div
-                key={c.id}
-                className="panel p-4 sm:p-5 space-y-4"
-              >
-                {/* Conflict Header */}
-                <div className="flex items-center justify-between pb-3 border-b border-border">
-                  <div className="flex items-center gap-2.5">
-                    <div className="p-1.5 rounded-lg bg-amber-950/30 border border-amber-800/40 text-amber-400">
-                      <AlertTriangle className="w-4 h-4" />
-                    </div>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono font-semibold uppercase tracking-wider text-white">
-                          {c.kind} Conflict
-                        </span>
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-mono uppercase font-medium border ${
-                            isOpen
-                              ? "bg-amber-950/30 text-amber-400 border-amber-800/40"
-                              : "bg-emerald-950/30 text-emerald-400 border-emerald-800/40"
-                          }`}
-                        >
-                          {c.status}
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-mono text-slate-500">
-                        Memory ID: {c.memory_id}
-                      </span>
-                    </div>
-                  </div>
-
-                  <span className="text-[11px] font-mono text-slate-500">
-                    {c.created_at
-                      ? new Date(Number(c.created_at)).toLocaleTimeString()
-                      : ""}
+            {a.value_differences && a.value_differences.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {a.value_differences.map((d) => (
+                  <span key={d} className="tag">
+                    {d}
                   </span>
-                </div>
-
-                {/* Side by Side Diff */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* Local version (Mine) */}
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-sky-400 font-mono text-[11px]">
-                        LOCAL (This Device)
-                      </span>
-                      <span className="font-mono text-[10px] text-slate-500">
-                        v{local.version} · {local.author || local.device_id}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-200 bg-slate-950 p-2.5 rounded border border-slate-800/80 leading-relaxed font-mono">
-                      {local.text}
-                    </p>
-                  </div>
-
-                  {/* Remote version (Fleet) */}
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-900/60 space-y-2">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-semibold text-indigo-400 font-mono text-[11px]">
-                        REMOTE (Fleet Server)
-                      </span>
-                      <span className="font-mono text-[10px] text-slate-500">
-                        v{remote.version} · {remote.author || remote.device_id}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-200 bg-slate-950 p-2.5 rounded border border-slate-800/80 leading-relaxed font-mono">
-                      {remote.text}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Merge Editor */}
-                {isEditing && (
-                  <div className="p-3.5 rounded-lg border border-slate-800 bg-slate-950 space-y-3">
-                    <label className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
-                      <Edit3 className="w-3.5 h-3.5 text-sky-400" />
-                      <span>Synthesized Merged Content:</span>
-                    </label>
-                    <textarea
-                      rows={3}
-                      value={mergedText}
-                      onChange={(e) => setMergedText(e.target.value)}
-                      className="w-full p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-xs text-white focus:outline-none focus:border-sky-500 font-mono leading-relaxed"
-                    />
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => setEditingConflictId(null)}
-                        className="px-3 py-1.5 rounded-lg text-xs border border-slate-800 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors cursor-pointer"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={() =>
-                          resolveMutation.mutate({
-                            conflictId: c.id,
-                            resolution: "merged",
-                            text: mergedText,
-                          })
-                        }
-                        className="px-3.5 py-1.5 rounded-lg text-xs bg-sky-600 hover:bg-sky-500 text-white font-medium transition-colors cursor-pointer shadow-xs"
-                      >
-                        Confirm &amp; Push Merge
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                {isOpen && !isEditing && (
-                  <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-border">
-                    <button
-                      onClick={() =>
-                        resolveMutation.mutate({
-                          conflictId: c.id,
-                          resolution: "keep_local",
-                        })
-                      }
-                      disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      Keep Mine (Local)
-                    </button>
-
-                    <button
-                      onClick={() =>
-                        resolveMutation.mutate({
-                          conflictId: c.id,
-                          resolution: "keep_remote",
-                        })
-                      }
-                      disabled={resolveMutation.isPending}
-                      className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-slate-300 hover:text-white text-xs font-medium transition-colors cursor-pointer"
-                    >
-                      Keep Theirs (Remote)
-                    </button>
-
-                    <button
-                      onClick={() => {
-                        setEditingConflictId(c.id);
-                        setMergedText(`${local.text}\n---\n${remote.text}`);
-                      }}
-                      className="px-3.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
-                    >
-                      <GitMerge className="w-3.5 h-3.5" />
-                      <span>Merge Notes</span>
-                    </button>
-                  </div>
-                )}
+                ))}
               </div>
-            );
-          })
-        )}
+            )}
+          </div>
+        ) : a ? (
+          <p className="text-sm text-muted">The AI couldn&apos;t compare these. Read both and pick one.</p>
+        ) : null}
       </div>
+
+      {merging ? (
+        <div className="mt-4 space-y-3 animate-fade-in">
+          <label htmlFor={`merge-${c.id}`} className="label">
+            Combined note
+          </label>
+          <textarea
+            id={`merge-${c.id}`}
+            rows={4}
+            autoFocus
+            value={mergedText}
+            onChange={(e) => setMergedText(e.target.value)}
+            className="input"
+          />
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setMerging(false)} className="btn btn-ghost">
+              Cancel
+            </button>
+            <button
+              onClick={() => resolve.mutate({ resolution: "merged", text: mergedText })}
+              disabled={!mergedText.trim() || resolve.isPending}
+              className="btn btn-primary"
+            >
+              Save combined note
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap justify-end gap-2 mt-5">
+          <button
+            onClick={() => resolve.mutate({ resolution: "keep_local" })}
+            disabled={resolve.isPending}
+            className={btn("keep_local")}
+          >
+            Keep mine
+          </button>
+          <button
+            onClick={() => resolve.mutate({ resolution: "keep_remote" })}
+            disabled={resolve.isPending}
+            className={btn("keep_remote")}
+          >
+            Keep theirs
+          </button>
+          <button
+            onClick={() => {
+              // Start from the AI's grounded merge when it proposed one
+              setMergedText(a?.merged_text || `${local.text}\n\n${remote.text}`);
+              setMerging(true);
+            }}
+            disabled={resolve.isPending}
+            className={btn("merge")}
+          >
+            Combine…
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+function Version({ label, who, text }: { label: string; who: string; text?: string }) {
+  return (
+    <div className="rounded-lg bg-subtle px-4 py-3">
+      <div className="flex items-center justify-between gap-2 text-xs mb-1.5">
+        <span className="font-medium">{label}</span>
+        <span className="text-muted truncate">{who}</span>
+      </div>
+      <p className="text-sm leading-relaxed text-fg/90 whitespace-pre-wrap">{text}</p>
     </div>
   );
 }

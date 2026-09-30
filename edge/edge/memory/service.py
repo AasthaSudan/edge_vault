@@ -18,6 +18,10 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+_SCROLL_PAGE = 500     # points per scroll call when listing
+_LIST_CAP = 20000      # safety bound on how many notes list_memories will load
+
+
 def _base_payload(mid: str, text: str, title: str, asset_tag: str, d: gatemod.GateDecision, ts: int) -> dict:
     return {
         "memory_id": mid,
@@ -42,6 +46,16 @@ def _base_payload(mid: str, text: str, title: str, asset_tag: str, d: gatemod.Ga
         "merged_from": [],
         "sync_state": "pending" if d.category == "shareable" else "local_only",
     }
+
+
+def _corroborate(cur: dict) -> None:
+    """This device's note merged into a fleet note from ANOTHER device: an independent
+    report of the same fact. Record it; the cloud keeps the union across all pushes."""
+    if cur.get("category") != "shareable" or cur.get("device_id") == settings.device_id:
+        return
+    devs = set(cur.get("corroborated_by") or []) | {cur.get("device_id"), settings.device_id}
+    devs.discard(None)
+    cur.update(corroborated_by=sorted(devs), corroboration_count=len(devs), fleet_verified=len(devs) >= 2)
 
 
 def _upsert(sh: Shard, mid: str, vectors: dict, payload: dict):
@@ -106,6 +120,7 @@ def create(
             if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
                 cur["merged_from"] = []
             cur["merged_from"].append(mid)
+            _corroborate(cur)
 
             _upsert(target_shard, str(dup.id), vectors, cur)
             if category == "shareable":
@@ -193,6 +208,18 @@ def finalize(
     d = gatemod.decide_v2(f"{title}\n{text}".strip(), vectors["dense"], memory_id=mid)
     ts = now_ms()
 
+    if provisional:
+        # decide_v2 takes seconds (local LLM). Meanwhile the technician may have deleted the note,
+        # overridden its category or edited its text. Those actions win: writing this verdict now
+        # would resurrect a deleted note (possibly fleet-wide) or clobber the override/edit.
+        _, live = get(mid)
+        if live is None or live.payload.get("deleted") or live.payload.get("gate_source") != "pending":
+            return dict(live.payload) if live else {}
+        lp = live.payload
+        if (lp.get("text"), lp.get("title", ""), lp.get("asset_tag", "")) != (text, title, asset_tag):
+            _enqueue_job(mid, "classify")  # classify the edited text instead
+            return dict(lp)
+
     if d.category == "shareable":
         dup = find_duplicate(shared, vectors["dense"], asset_tag=asset_tag) if dedup else None
         if dup:
@@ -208,6 +235,7 @@ def finalize(
             if "merged_from" not in cur or not isinstance(cur["merged_from"], list):
                 cur["merged_from"] = []
             cur["merged_from"].append(mid)
+            _corroborate(cur)
 
             _upsert(shared, str(dup.id), vectors, cur)
             egress.enqueue_shareable(str(dup.id), vectors, cur, cur["version"], base)
@@ -291,17 +319,22 @@ def list_memories(
 
     flt = Filter(must=flt_conditions) if flt_conditions else None
 
+    # Scroll returns points in id order (random UUIDs), so "newest N" needs every live note:
+    # page through the shard (payloads only, lock held per page), then sort and slice.
     for sh in shards_to_check:
-        with sh.lock:
-            recs, _ = sh.shard.scroll(ScrollRequest(
-                limit=limit + offset,
-                filter=flt,
-                with_payload=True,
-                with_vector=False
-            ))
-            for r in recs:
-                if not r.payload.get("deleted", False):
-                    results.append(r.payload)
+        next_offset = None
+        while len(results) < _LIST_CAP:
+            with sh.lock:
+                recs, next_offset = sh.shard.scroll(ScrollRequest(
+                    offset=next_offset,
+                    limit=_SCROLL_PAGE,
+                    filter=flt,
+                    with_payload=True,
+                    with_vector=False
+                ))
+            results.extend(r.payload for r in recs if not r.payload.get("deleted", False))
+            if next_offset is None or not recs:
+                break
 
     results.sort(key=lambda x: x.get("updated_at", 0), reverse=True)
     return results[offset:offset + limit]
@@ -397,6 +430,17 @@ def change_category(mid: str, new_category: str) -> Optional[dict]:
     old_cat = cur.get("category")
     old_source = cur.get("gate_source")
     if old_cat == new_category:
+        if old_source == "pending" and new_category == "private":
+            # "Keep private" on a note still being classified must stick, otherwise the gate
+            # would later promote it to the shared shard and push it to the fleet.
+            reason = "Manual override by technician: kept private"
+            cur.update(gate_source="user", gate_reason=reason)
+            with old_sh.lock:
+                old_sh.shard.update(UpdateOperation.set_payload([mid], {"gate_source": "user", "gate_reason": reason}))
+            try:
+                db.execute("UPDATE gate_jobs SET status='cancelled' WHERE memory_id=? AND status IN ('pending', 'inflight')", (mid,))
+            except Exception as e:
+                print(f"Gate job cancel notice: {e}")
         return cur
     if new_category == "shareable":
         hits = pii.scan(f"{cur.get('title', '')} {cur.get('text', '')}")
@@ -411,6 +455,8 @@ def change_category(mid: str, new_category: str) -> Optional[dict]:
     cur["updated_at"] = ts
     cur["base_version"] = cur.get("version", 1)
     cur["version"] = cur["base_version"] + 1
+    # Routine notes expire after the TTL; a stale expiry must not follow the note into another category
+    cur["expires_at"] = ts + (settings.routine_ttl_days * 86400 * 1000) if new_category == "routine" else None
 
     new_sh = shard_for(new_category)
     vectors = embed_doc(cur["text"])

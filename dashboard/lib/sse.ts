@@ -12,12 +12,14 @@ export type EdgeEvent = {
 
 export function useEdgeEvents(base: string, max = 200) {
   const [events, setEvents] = useState<EdgeEvent[]>([]);
+  const [connected, setConnected] = useState(false);
   const queryClient = useQueryClient();
 
   useEffect(() => {
     let es: EventSource | null = null;
     try {
       es = new EventSource(`${base}/events`);
+      es.onopen = () => setConnected(true);
 
       es.onmessage = (m) => {
         try {
@@ -48,7 +50,8 @@ export function useEdgeEvents(base: string, max = 200) {
       };
 
       es.onerror = () => {
-        // EventSource will automatically retry connecting
+        // EventSource retries on its own; onopen flips this back
+        setConnected(false);
       };
     } catch (e) {
       console.error("SSE connection error", e);
@@ -59,5 +62,5 @@ export function useEdgeEvents(base: string, max = 200) {
     };
   }, [base, max, queryClient]);
 
-  return events;
+  return { events, connected };
 }

@@ -1,232 +1,125 @@
 "use client";
 
-import React, { useState, useEffect, useRef } from "react";
+import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { OfflineToggle } from "./OfflineToggle";
-import { LlmStatus } from "./LlmStatus";
-import {
-  Shield,
-  Layers,
-  Bot,
-  Sparkles,
-  Database,
-  Search,
-  RefreshCw,
-  AlertTriangle,
-  Activity,
-  ChevronDown,
-  Menu,
-  X,
-} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { Home, MessageSquare, FileText, Inbox, RefreshCw, Shield } from "lucide-react";
 import { fetchEdge } from "@/lib/api";
+import { StatusMenu } from "./StatusMenu";
+import { cn } from "./ui";
 
 interface NavItem {
   name: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: boolean;
-  desc?: string;
+  // Secondary pages that live under this tab
+  also?: string[];
 }
 
-const PRIMARY_NAV: NavItem[] = [
-  { name: "Overview", href: "/", icon: Layers },
-  { name: "Assistant", href: "/assistant", icon: Bot },
-  { name: "Memories", href: "/memories", icon: Database },
-  { name: "Proposals", href: "/suggestions", icon: Sparkles, badge: true },
-  { name: "Sync", href: "/sync", icon: RefreshCw },
+const NAV: NavItem[] = [
+  { name: "Home", href: "/", icon: Home },
+  { name: "Ask", href: "/assistant", icon: MessageSquare },
+  { name: "Notes", href: "/memories", icon: FileText, also: ["/search"] },
+  { name: "Review", href: "/suggestions", icon: Inbox, also: ["/conflicts"] },
+  { name: "Sync", href: "/sync", icon: RefreshCw, also: ["/activity"] },
 ];
 
-const MORE_NAV: NavItem[] = [
-  { name: "Search", href: "/search", icon: Search, desc: "Hybrid dense & sparse search" },
-  { name: "Conflicts", href: "/conflicts", icon: AlertTriangle, desc: "Version branch & merge" },
-  { name: "Activity", href: "/activity", icon: Activity, desc: "Real-time SSE event stream" },
-];
-
-export function Navbar() {
-  const pathname = usePathname();
-  const [moreOpen, setMoreOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const moreRef = useRef<HTMLDivElement>(null);
-
-  const { data: health } = useQuery({
-    queryKey: ["health"],
-    queryFn: () => fetchEdge("/health"),
-    refetchInterval: 5000,
-  });
-
-  const { data: pendingSuggestions } = useQuery({
+// Items waiting on the user: share suggestions plus open sync conflicts
+export function useReviewCount() {
+  const { data: suggestions } = useQuery({
     queryKey: ["pending-suggestions"],
     queryFn: () => fetchEdge("/suggestions?status=pending"),
     refetchInterval: 4000,
   });
+  const { data: conflicts } = useQuery({
+    queryKey: ["conflicts"],
+    queryFn: () => fetchEdge("/conflicts"),
+    refetchInterval: 5000,
+  });
+  const s = Array.isArray(suggestions) ? suggestions.length : 0;
+  const c = Array.isArray(conflicts) ? conflicts.filter((x: any) => x.status === "open").length : 0;
+  return { suggestions: s, conflicts: c, total: s + c };
+}
 
-  const suggestionsCount = Array.isArray(pendingSuggestions) ? pendingSuggestions.length : 0;
-  const isMoreActive = MORE_NAV.some((item) => item.href === pathname);
+export function Navbar() {
+  const pathname = usePathname();
+  const review = useReviewCount();
 
-  // Close dropdown on outside click
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (moreRef.current && !moreRef.current.contains(e.target as Node)) {
-        setMoreOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
-
-  // Close menus on route change
-  useEffect(() => {
-    setMoreOpen(false);
-    setMobileMenuOpen(false);
-  }, [pathname]);
+  const isActive = (item: NavItem) =>
+    item.href === "/" ? pathname === "/" : [item.href, ...(item.also ?? [])].some((p) => pathname.startsWith(p));
 
   return (
-    <header className="sticky top-0 z-50 border-b border-border bg-[#090d16]/95 backdrop-blur-md">
-      <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between gap-3">
-        {/* Brand */}
-        <div className="flex items-center gap-2 shrink-0">
-          <Link href="/" className="flex items-center gap-2 group whitespace-nowrap">
-            <div className="w-7 h-7 rounded-lg bg-slate-800 border border-slate-700 flex items-center justify-center text-sky-400 group-hover:text-white transition-colors shrink-0">
-              <Shield className="w-4 h-4" />
-            </div>
-            <span className="font-semibold text-sm tracking-tight text-white">
+    <>
+      <header className="sticky top-0 z-40 border-b border-line bg-bg/80 backdrop-blur-md">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 h-14 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-8">
+            <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
+              <span className="w-6 h-6 rounded-md bg-fg text-bg flex items-center justify-center">
+                <Shield className="w-3.5 h-3.5" />
+              </span>
               EdgeVault
-            </span>
-          </Link>
-          <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 text-slate-400 hidden sm:inline-block shrink-0">
-            {health?.device_id || "device-a"}
-          </span>
-        </div>
+            </Link>
 
-        {/* Desktop Navigation Tabs */}
-        <nav className="hidden md:flex items-center gap-1 shrink-0">
-          {PRIMARY_NAV.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors ${
-                  isActive
-                    ? "bg-slate-800 text-white font-medium shadow-xs"
-                    : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-                }`}
-              >
-                <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span>{item.name}</span>
-                {item.badge && suggestionsCount > 0 && (
-                  <span className="ml-0.5 px-1.5 py-0.2 rounded-full bg-sky-600 text-white font-mono text-[10px] font-semibold leading-none">
-                    {suggestionsCount}
-                  </span>
-                )}
-              </Link>
-            );
-          })}
-
-          {/* More Dropdown */}
-          <div className="relative" ref={moreRef}>
-            <button
-              onClick={() => setMoreOpen(!moreOpen)}
-              className={`flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors cursor-pointer ${
-                isMoreActive || moreOpen
-                  ? "bg-slate-800 text-white font-medium"
-                  : "text-slate-400 hover:text-slate-200 hover:bg-slate-800/50"
-              }`}
-            >
-              <span>More</span>
-              <ChevronDown
-                className={`w-3 h-3 transition-transform duration-150 ${
-                  moreOpen ? "rotate-180 text-white" : "text-slate-500"
-                }`}
-              />
-            </button>
-
-            {moreOpen && (
-              <div className="absolute left-0 mt-1.5 w-48 rounded-lg border border-slate-800 bg-[#0c121e] shadow-xl py-1 z-50 animate-in fade-in zoom-in-95 duration-100">
-                {MORE_NAV.map((item) => {
-                  const Icon = item.icon;
-                  const isActive = pathname === item.href;
-
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      onClick={() => setMoreOpen(false)}
-                      className={`flex items-start gap-2.5 px-3 py-2 text-xs transition-colors ${
-                        isActive
-                          ? "bg-slate-800 text-white font-medium"
-                          : "text-slate-300 hover:bg-slate-800/60 hover:text-white"
-                      }`}
-                    >
-                      <Icon className="w-3.5 h-3.5 mt-0.5 text-sky-400 shrink-0" />
-                      <div>
-                        <div className="font-medium text-slate-200 leading-none">
-                          {item.name}
-                        </div>
-                        <div className="text-[10px] text-slate-500 mt-1 leading-tight">
-                          {item.desc}
-                        </div>
-                      </div>
-                    </Link>
-                  );
-                })}
-              </div>
-            )}
+            <nav className="hidden md:flex items-center gap-1">
+              {NAV.map((item) => {
+                const active = isActive(item);
+                const badge = item.href === "/suggestions" ? review.total : 0;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      "relative inline-flex items-center gap-1.5 h-8 px-3 rounded-lg text-sm transition-colors",
+                      active ? "text-fg font-medium bg-subtle" : "text-muted hover:text-fg"
+                    )}
+                  >
+                    {item.name}
+                    {badge > 0 && (
+                      <span className="min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-bg text-[11px] font-semibold flex items-center justify-center tabular-nums">
+                        {badge}
+                      </span>
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
           </div>
-        </nav>
 
-        {/* Right Controls & Mobile Toggle */}
-        <div className="flex items-center gap-2 shrink-0">
-          <LlmStatus />
-          <OfflineToggle />
-
-          {/* Mobile Menu Button */}
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="md:hidden p-1.5 rounded-md text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            title="Toggle Menu"
-          >
-            {mobileMenuOpen ? <X className="w-4 h-4" /> : <Menu className="w-4 h-4" />}
-          </button>
+          <StatusMenu />
         </div>
-      </div>
+      </header>
 
-      {/* Mobile Dropdown Panel */}
-      {mobileMenuOpen && (
-        <div className="md:hidden border-t border-slate-800 bg-[#090d16] px-4 py-3 space-y-1">
-          {[...PRIMARY_NAV, ...MORE_NAV].map((item) => {
+      {/* Mobile tab bar */}
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-40 border-t border-line bg-bg/90 backdrop-blur-md pb-[env(safe-area-inset-bottom)]">
+        <div className="grid grid-cols-5">
+          {NAV.map((item) => {
             const Icon = item.icon;
-            const isActive = pathname === item.href;
-
+            const active = isActive(item);
+            const badge = item.href === "/suggestions" ? review.total : 0;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className={`flex items-center justify-between px-3 py-2 rounded-md text-xs font-medium transition-colors ${
-                  isActive
-                    ? "bg-slate-800 text-white"
-                    : "text-slate-400 hover:bg-slate-800/40 hover:text-white"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <Icon className="w-4 h-4 text-sky-400" />
-                  <span>{item.name}</span>
-                </div>
-                {item.badge && suggestionsCount > 0 && (
-                  <span className="px-1.5 py-0.2 rounded-full bg-sky-600 text-white font-mono text-[10px] font-semibold">
-                    {suggestionsCount}
-                  </span>
+                className={cn(
+                  "relative flex flex-col items-center gap-1 pt-2.5 pb-2 text-[11px] font-medium transition-colors",
+                  active ? "text-fg" : "text-faint"
                 )}
+              >
+                <span className="relative">
+                  <Icon className="w-5 h-5" />
+                  {badge > 0 && (
+                    <span className="absolute -top-1 -right-2 min-w-[16px] h-4 px-1 rounded-full bg-accent text-bg text-[10px] font-semibold flex items-center justify-center">
+                      {badge}
+                    </span>
+                  )}
+                </span>
+                {item.name}
               </Link>
             );
           })}
         </div>
-      )}
-    </header>
+      </nav>
+    </>
   );
 }
