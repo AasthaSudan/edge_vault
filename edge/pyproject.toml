@@ -5,7 +5,9 @@ description = "EdgeVault on-device node"
 requires-python = ">=3.11"
 dependencies = [
     "qdrant-edge-py>=0.8.0",
-    "fastembed>=0.3.0",
+    "fastembed>=0.3.0",       # model download (make provision) + fallback for other DENSE_MODELs
+    "onnxruntime>=1.17.0",    # runs bge-small directly at runtime (see edge/store/embed.py)
+    "tokenizers>=0.15.0",
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.28.0",
     "pydantic>=2.6.0",
