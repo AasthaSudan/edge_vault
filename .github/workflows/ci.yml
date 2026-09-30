@@ -32,7 +32,7 @@ jobs:
       - name: Import contract (sync can never reach the LLM, assistant or gate context)
         run: lint-imports
         env: { PYTHONPATH: edge }
-      - name: Privacy, taint, durability, gate and memory tests (no Ollama: exercises fail-closed paths)
+      - name: "Privacy, taint, durability, gate and memory tests (no Ollama: exercises fail-closed paths)"
         run: pytest edge/tests -q --ignore=edge/tests/test_sync.py --ignore=edge/tests/test_search.py
         env: { PYTHONPATH: edge, DEVICE_ID: ci-unit }
       - name: Search accuracy + latency (seeded device)

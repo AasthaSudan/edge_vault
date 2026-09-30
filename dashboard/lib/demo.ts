@@ -2,4 +2,4 @@
 // server with the on-device LLM switched off, so the UI says so and points to a local setup.
 export const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_NOTICE === "1";
 
-export const LOCAL_SETUP_URL = "https://github.com/AasthaSudan/edge_vault#quickstart";
+export const LOCAL_SETUP_URL = "https://github.com/aaditya3301/edge_vault#quickstart";

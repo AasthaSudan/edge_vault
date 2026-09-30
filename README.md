@@ -1,6 +1,6 @@
 # EdgeVault
 
-[![CI](https://github.com/AasthaSudan/edge_vault/actions/workflows/ci.yml/badge.svg)](https://github.com/AasthaSudan/edge_vault/actions/workflows/ci.yml)
+[![CI](https://github.com/aaditya3301/edge_vault/actions/workflows/ci.yml/badge.svg)](https://github.com/aaditya3301/edge_vault/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![Next.js 14](https://img.shields.io/badge/Next.js-14-black.svg)](https://nextjs.org/)
