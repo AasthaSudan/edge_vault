@@ -178,3 +178,44 @@ dashboard/
 └── lib/
     └── stream.ts                         # NEW: NDJSON stream reader
 ```
+
+---
+
+## 5. Implementation Status & Measured Results (30 Sep 2026)
+
+Measured on the demo laptop (Ryzen 5 5600H, 15.4 GB RAM, CPU only, Ollama 0.34.4).
+
+### 5.1 Model benchmark (`edge/scripts/bench_models.py`, 40 items × 5 runs, fresh device)
+
+| Model | Accuracy | False shareables | Flips | p50 / p95 |
+|---|---|---|---|---|
+| **qwen2.5:1.5b (chosen)** | 85% | 4 → **0** after rule fixes below | 0 | 1.7 s / 2.9 s |
+| gemma3:1b | 57.5% | 0 | 0 | 1.6 s / 2.4 s (labels most fixes "routine") |
+| llama3.2:1b | 77.5% | 5 | 0 | 2.1 s / 2.8 s |
+
+### 5.2 Exit criteria
+
+| Check | Result |
+|---|---|
+| Gate v2 (`tests/eval_gate.py`) | **90% → 95%** with 5 seeded corrections · **0 false shareables** · **0 flips** · Split & Share yield 9/10 |
+| Assistant (`tests/eval_assistant.py`, top_k=4) | 15/15 answered with citations · citation validity 100% · refusals 5/5 · **0 invented numbers** · expected-value recall 10/11 (one omitted "15A") |
+| Privacy tests (`pytest edge/tests`, incl. pytest-socket loopback-only run) | 19 passed · `lint-imports` contract kept |
+| Sync (`tests/test_sync.py`) | 9/9 steps, incl. stale-edit conflict + server-clock pull regressions |
+| Demo (`scripts/run_demo_sequence.py`) + §9.5 step 6 | Pass on a clean device; Device B finds the sanitized Viton fact, never "4431"/"Noida"; `private_on_server = 0` |
+| Assistant first token (NFR-11, target < 2.5 s) | **Not met:** ~70 ms with a warm prompt cache, 3.4 s median cold (4 notes); gate calls evict Ollama's prompt cache |
+
+### 5.3 Fixes made during verification
+
+- **Fail-closed gate:** without an LLM verdict a note is always `private` (keyword heuristics now only provide signals). `POST /memories/{id}/reclassify` re-runs Gate v2 later.
+- **Durability:** Qdrant Edge keeps writes in memory until `flush()`; a crash lost every acknowledged note. Every shard update is now flushed (`DurableEdgeShard`, ~40 ms), an unreadable shard is moved aside instead of deleted, and pull restores a device's own notes if its local copy is missing.
+- **New deterministic rules:** `lock_combination`, `sensitive_request` ("keep it confidential"), `named_person` ("Guard Ramesh").
+- **Split & Share:** PII sentences are redacted before the sanitizer LLM sees the note; approval creates a new `user_approved` memory and re-checks grounding/numbers on edits.
+- **Assistant:** citation + refusal examples in the static prompt prefix; grouped citations normalized; uncited "not in the notes" answers become the canonical refusal; answers naming an asset tag no source mentions are replaced by the refusal; citation attribution backstop (`attributed: true`).
+- **Taint save / derived notes** are never dedup-merged into (and overwrite) the note they quote.
+- **Sync:** `base_version` fixed for edits/overrides/deletes; pull is paged and keyed on the server clock (`server_ts`); delete tombstones carry no text; pushed notes flip to `synced`.
+- **Correction matching:** similarity threshold 0.60 → 0.78 (`gate_correction_min_score`); at 0.60 one "private" correction vetoed unrelated fixes.
+
+### 5.4 Operating notes
+
+- Rehearsals: the demo's final step retracts a note, which is stored as a correction, so a second run on the same device correctly vetoes it. Reset (`make reset`) or use a fresh `DEVICE_ID` between rehearsals.
+- Recommended Ollama settings (set once in Windows, then restart Ollama): `OLLAMA_MAX_LOADED_MODELS=1`, `OLLAMA_KEEP_ALIVE=30m`.

@@ -5,7 +5,51 @@ from edge.events import emit
 from edge.llm import client as llm
 
 CITE = re.compile(r"\[(\d{1,2})\]")
+GROUPED_CITE = re.compile(r"\[(\d{1,2}(?:\s*,\s*\d{1,2})+)\]")
 REFUSAL = "I don't have that in this device's memory."
+_WORD = re.compile(r"[a-z0-9][a-z0-9\-\.]*", re.I)
+_STOP = {"the", "and", "was", "were", "with", "for", "from", "that", "this", "what", "how",
+         "you", "your", "are", "has", "have", "had", "its", "into", "when", "then", "to", "is", "by"}
+ATTRIBUTE_MIN = 0.5  # share of a sentence's content words that must come from one note
+
+
+def _tokens(t: str) -> set[str]:
+    return {w.lower().rstrip(".") for w in _WORD.findall(t) if len(w) >= 3 and w.lower() not in _STOP}
+
+
+_NOT_IN_NOTES = re.compile(
+    r"\b(not|no)\s+(specifically\s+)?(mentioned|provided|specified|found|available|given|listed|included|stated|information)\b"
+    r"|\bdoes(n't| not)\s+(have|contain|mention|include)\b", re.I)
+
+
+def ungrounded_reason(text: str, sources: list[dict]) -> str | None:
+    """Deterministic checks run on every answer. Returns why it must become a refusal."""
+    if CITE.search(text) is None and _NOT_IN_NOTES.search(text):
+        return "refusal_paraphrase"          # "not mentioned in the notes" == canonical refusal
+    corpus = " ".join(f"{s.get('title') or ''} {s.get('text') or ''} {s.get('asset_tag') or ''}" for s in sources).upper()
+    for tag in {m.group(0) for m in R.ASSET_TAG.finditer(text.upper())}:
+        if tag not in corpus:
+            return f"unknown_asset:{tag}"    # names equipment that no source mentions
+    return None
+
+
+def attribute(text: str, sources: list[dict]) -> str:
+    """Backstop for small models that skip the [n] format: cite each sentence with the
+    source whose words it uses most (>= ATTRIBUTE_MIN overlap). Sentences no note
+    supports stay uncited, so they show as ungrounded instead of borrowing a citation."""
+    out = []
+    for sent in re.split(r"(?<=[.!?])\s+", text.strip()):
+        words = _tokens(sent)
+        best_n, best = None, 0.0
+        for s in sources:
+            src = _tokens(f"{s.get('title', '')} {s.get('text', '')}")
+            score = len(words & src) / len(words) if words else 0.0
+            if score > best:
+                best_n, best = s["n"], score
+        if best_n is not None and best >= ATTRIBUTE_MIN and not CITE.search(sent):
+            sent = re.sub(r"([.!?]?)$", f" [{best_n}]\\1", sent, count=1)
+        out.append(sent)
+    return " ".join(out)
 
 
 def _extractive_fallback_answer(question: str, sources: list[dict]) -> str:
@@ -94,9 +138,18 @@ def ask(session_id: str | None, question: str, scope: str = "device"):
                 answer.append(token)
                 yield {"type": "token", "text": token}
 
-    text = "".join(answer).strip()
+    # Small models often group citations: "[1, 2]" -> "[1][2]" so parsing and UI chips see each one
+    text = GROUPED_CITE.sub(lambda m: "".join(f"[{n.strip()}]" for n in m.group(1).split(",")), "".join(answer).strip())
+    replaced =ungrounded_reason(text, sources) if text != REFUSAL else None
+    if replaced:
+        text = REFUSAL
     valid = {s["n"]: s for s in sources}
     cited_ns = sorted({int(n) for n in CITE.findall(text) if int(n) in valid})
+    attributed = False
+    if not cited_ns and sources and not text.startswith("I don't have"):
+        text = attribute(text, sources)
+        cited_ns = sorted({int(n) for n in CITE.findall(text) if int(n) in valid})
+        attributed = bool(cited_ns)
     cited = [valid[n]["memory_id"] for n in cited_ns]
     grounded = bool(cited) or text.startswith("I don't have")
     latency = {
@@ -120,6 +173,9 @@ def ask(session_id: str | None, question: str, scope: str = "device"):
     yield {
         "type": "done",
         "message_id": msg_id,
+        "text": text,              # final text; differs from the stream when citations were attributed
+        "attributed": attributed,
+        "replaced": replaced,      # why a streamed answer was replaced by the refusal, if it was
         "cited_ns": cited_ns,
         "cited": cited,
         "grounded": grounded,

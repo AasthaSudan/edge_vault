@@ -48,7 +48,8 @@ def _run():
                         p.get("title", ""),
                         p.get("asset_tag", ""),
                         p.get("created_at", int(time.time() * 1000)),
-                        provisional=True
+                        provisional=True,
+                        dedup=not p.get("derived", False),
                     )
                     status = "done"
             elif job["kind"] == "sanitize":

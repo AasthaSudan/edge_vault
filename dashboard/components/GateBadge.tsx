@@ -44,8 +44,16 @@ export function GateBadge({
     }
   };
 
+  // Gate explanation (spec §8.4): signals and how much on-device context was used
+  const explain = [
+    signals && signals.length > 0 ? `Signals: ${signals.join(", ")}` : null,
+    contextUsed && (contextUsed.neighbours !== undefined || contextUsed.corrections !== undefined)
+      ? `Used ${contextUsed.neighbours ?? 0} similar notes, ${contextUsed.corrections ?? 0} corrections`
+      : null,
+  ].filter(Boolean).join("\n");
+
   return (
-    <div className="flex flex-col gap-1 max-w-xs">
+    <div className="flex flex-col gap-1 max-w-xs" title={explain || undefined}>
       <div className="flex flex-wrap items-center gap-1.5">
         <span
           className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-mono uppercase font-medium border ${getStyle()}`}
@@ -75,8 +83,8 @@ export function GateBadge({
           </span>
         )}
 
-        {/* Veto flags */}
-        {flags && flags.map((flag) => (
+        {/* Veto flags (rule_hit is already shown by the PII chip) */}
+        {flags && flags.filter((f) => f.endsWith("_veto")).map((flag) => (
           <span
             key={flag}
             className="text-[10px] font-mono px-1.5 py-0.5 bg-amber-950/40 border border-amber-800/40 text-amber-400 rounded"
@@ -84,6 +92,11 @@ export function GateBadge({
             veto:{flag.replace("_veto", "")}
           </span>
         ))}
+        {flags?.includes("llm_unavailable") && (
+          <span className="text-[10px] font-mono px-1.5 py-0.5 bg-amber-950/40 border border-amber-800/40 text-amber-400 rounded">
+            llm offline · kept private
+          </span>
+        )}
       </div>
 
       {/* Reason or signals */}

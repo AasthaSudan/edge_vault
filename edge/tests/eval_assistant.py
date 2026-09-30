@@ -54,6 +54,7 @@ def run_evaluation():
     answerable_answered = 0
     numeric_checks_passed = 0
     numeric_checks_total = 0
+    invented_numbers = []   # spec §9.3: every number in an answer must appear in a cited note
 
     for idx, item in enumerate(questions, start=1):
         q = item["q"]
@@ -62,14 +63,20 @@ def run_evaluation():
         events = list(service.ask(session_id=None, question=q, scope="device"))
         sources = events[0].get("sources", [])
         tokens = [e["text"] for e in events if e.get("type") == "token"]
-        answer = "".join(tokens).strip()
         done_ev = events[-1]
+        # The final text (done event) includes deterministic post-checks: attributed
+        # citations, or a refusal replacing an ungrounded answer.
+        answer = done_ev.get("text", "".join(tokens)).strip()
 
         valid_source_indices = {s["n"] for s in sources}
         citations_found = [int(n) for n in CITE_REGEX.findall(answer)]
         total_citations_made += len(citations_found)
 
         all_valid = all(n in valid_source_indices for n in citations_found)
+        cited_text = " ".join(s.get("text", "") for s in sources if s["n"] in citations_found)
+        for num in re.findall(r"\d+(?:\.\d+)?", CITE_REGEX.sub("", answer)):
+            if num not in cited_text:
+                invented_numbers.append((q, num))
         if all_valid and (citations_found or not is_ans):
             valid_citations_count += 1
 
@@ -109,6 +116,9 @@ def run_evaluation():
     if numeric_checks_total > 0:
         print(f"Numeric Value Fidelity   : {numeric_checks_passed}/{numeric_checks_total} ({numeric_checks_passed/numeric_checks_total*100:.0f}%)")
 
+    print(f"Invented numbers         : {len(invented_numbers)} {invented_numbers} [Target: 0]")
+    assert not invented_numbers, f"Answers contain numbers not in their cited notes: {invented_numbers}"
+    assert citation_validity == 1.0, "Every [n] must map to a real source"
     assert refusal_rate >= 0.80, f"Unanswerable refusal rate {refusal_rate*100:.1f}% < 80%"
     print("\n==========================================")
     print("ALL ASSISTANT EVAL CRITERIA PASSED!")

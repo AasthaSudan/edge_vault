@@ -53,7 +53,7 @@ def similar_corrections(dense: list[float]) -> list[dict]:
         try:
             v = np.asarray(json.loads(r["dense_json"]), dtype=np.float32)
             s = float(q @ (v / (np.linalg.norm(v) + 1e-9)))
-            if s >= 0.60:
+            if s >= settings.gate_correction_min_score:
                 scored.append((s, dict(r)))
         except Exception:
             continue
