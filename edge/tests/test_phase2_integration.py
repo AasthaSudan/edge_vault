@@ -44,7 +44,8 @@ def test_near_duplicate_merge():
     print(f"Note 2 Submitted: id={note2['memory_id']}, version={note2['version']}, merged_from={note2.get('merged_from')}")
 
     assert note2["memory_id"] == note1["memory_id"], "Expected same memory ID to be updated"
-    assert note2["version"] == 2, f"Expected version 2, got {note2['version']}"
+    # note1 may itself have merged into a copy left by an earlier run on this device, so compare to it
+    assert note2["version"] == note1["version"] + 1, f"Expected version {note1['version'] + 1}, got {note2['version']}"
     assert len(note2["merged_from"]) >= 1, "Expected merged_from to contain merged ID"
     print("Test 2 PASSED: Near duplicate automatically merged.")
 
