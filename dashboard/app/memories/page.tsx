@@ -15,6 +15,14 @@ import {
   Sparkles,
 } from "lucide-react";
 
+function errorDetail(err: Error): string {
+  try {
+    return JSON.parse(err.message).detail ?? err.message;
+  } catch {
+    return err.message;
+  }
+}
+
 export default function MemoriesPage() {
   const qc = useQueryClient();
   const [categoryFilter, setCategoryFilter] = useState<string>("");
@@ -81,6 +89,15 @@ export default function MemoriesPage() {
       qc.invalidateQueries({ queryKey: ["local-stats"] });
       qc.invalidateQueries({ queryKey: ["sync-status"] });
     },
+    onError: (err: Error) => alert(errorDetail(err)),
+  });
+
+  // Re-run Gate v2 on a note that fell back to private while the LLM was down
+  const reclassifyMutation = useMutation({
+    mutationFn: (id: string) =>
+      fetchEdge(`/memories/${id}/reclassify`, { method: "POST" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["memories"] }),
+    onError: (err: Error) => alert(errorDetail(err)),
   });
 
   const handleCreate = (e: React.FormEvent) => {
@@ -347,6 +364,17 @@ export default function MemoriesPage() {
 
                       <td className="p-3 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {/* Re-classify: only for notes the LLM could not decide */}
+                          {m.gate_source === "fallback" && (
+                            <button
+                              onClick={() => reclassifyMutation.mutate(m.memory_id)}
+                              className="p-1.5 rounded hover:bg-slate-800 text-amber-400 hover:text-amber-300 transition-colors"
+                              title="Re-classify with the on-device LLM"
+                            >
+                              <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
                           {/* Retraction / Override button */}
                           <button
                             onClick={() =>

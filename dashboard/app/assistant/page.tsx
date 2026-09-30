@@ -176,7 +176,7 @@ export default function AssistantPage() {
               next[assistantIndex] = {
                 ...next[assistantIndex],
                 id: ev.message_id,
-                content: accumulatedText,
+                content: ev.text ?? accumulatedText,
                 sources: currentSources,
                 cited_ns: ev.cited_ns,
                 cited: ev.cited,

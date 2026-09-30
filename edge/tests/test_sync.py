@@ -153,6 +153,53 @@ async def test_full_sync_lifecycle():
         assert resolve_data["status"] == "resolved"
     print("Conflict Resolution VERIFIED.")
 
+    print("\n--- Step 8: Edits carry the correct base_version ---")
+    mid = shareable_note["memory_id"]
+    server_version = resolve_data["version"]
+    # a) Edit on top of the resolved server version is accepted without a conflict
+    edited = service.update(mid, text="P-200 cavitation: replace impeller; stainless steel upgrade preferred", server_version=server_version)
+    assert edited["base_version"] == server_version and edited["version"] == server_version + 1
+    async with httpx.AsyncClient(timeout=15) as client:
+        while outbox.depth() > 0:
+            await push.push_once(client)
+        conflicts_before = db.execute("SELECT COUNT(*) FROM conflicts").fetchone()[0]
+
+        # b) Device B edits the cloud copy first, then Device A edits its stale local copy
+        pb = {**edited, "text": "Device B: impeller fine, clean the strainer", "device_id": "device-b",
+              "version": edited["version"] + 1, "base_version": edited["version"]}
+        r_b = await client.post(f"{SYNC_API_URL}/push", json={"device_id": "device-b", "items": [{
+            "memory_id": mid, "op": "upsert",
+            "point": {"id": mid, "vector": {"dense": [0.05] * 384, "bm25": {"indices": [1], "values": [1.0]}}, "payload": pb},
+            "version": pb["version"], "base_version": pb["base_version"]}]})
+        assert mid in r_b.json()["accepted"]
+
+        stale = service.update(mid, text="Device A: stale offline edit")
+        assert stale["base_version"] == edited["version"], "base_version must be the version the edit started from"
+        while outbox.depth() > 0:
+            await push.push_once(client)
+        conflicts_after = db.execute("SELECT COUNT(*) FROM conflicts").fetchone()[0]
+    assert conflicts_after == conflicts_before + 1, "A stale edit must be detected as a version conflict, not overwrite"
+    print("Edit versioning VERIFIED: fresh edit accepted, stale edit raised a conflict.")
+
+    print("\n--- Step 9: Pull uses the server clock (offline edit with an old timestamp) ---")
+    async with httpx.AsyncClient(timeout=15) as client:
+        assert await pull.pull_once(client), "Initial pull failed"
+        # Device C edited offline long ago (updated_at in 1970) and only now reconnects
+        old_id = str(__import__("uuid").uuid4())
+        old_pl = {"memory_id": old_id, "text": "C-14 compressor trips when intake filter clogs; clean filter.",
+                  "title": "C-14 trip", "asset_tag": "C-14", "category": "shareable", "device_id": "device-c",
+                  "version": 1, "base_version": 0, "created_at": 1, "updated_at": 1, "deleted": False}
+        await client.post(f"{SYNC_API_URL}/push", json={"device_id": "device-c", "items": [{
+            "memory_id": old_id, "op": "upsert",
+            "point": {"id": old_id, "vector": {"dense": [0.03] * 384, "bm25": {"indices": [3], "values": [1.0]}}, "payload": old_pl},
+            "version": 1, "base_version": 0}]})
+        assert await pull.pull_once(client), "Delta pull failed"
+    from edge.store.shards import shared
+    with shared.lock:
+        got = shared.shard.retrieve([old_id], True, False)
+    assert got, "Record with an old device timestamp was not delivered by the delta pull"
+    print("Server-clock pull VERIFIED: offline edit with an old updated_at was delivered.")
+
     print("\n==========================================")
     print("ALL PHASE 3 SYNC & CONFLICT TESTS PASSED!")
     print("==========================================")

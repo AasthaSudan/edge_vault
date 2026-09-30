@@ -416,7 +416,8 @@ curl http://localhost:8080/stats
 | `GET` | `/memories` | Lists memories across private and shared shards with category filters |
 | `GET` | `/memories/{memory_id}` | Retrieves a single memory by ID |
 | `PATCH` | `/memories/{memory_id}` | Updates memory text, title, or asset tag |
-| `POST` | `/memories/{memory_id}/category` | Manually overrides category (`private`, `shareable`, `routine`) |
+| `POST` | `/memories/{memory_id}/category` | Manually overrides category (`private`, `shareable`, `routine`); refuses `shareable` if the note matches a PII rule |
+| `POST` | `/memories/{memory_id}/reclassify` | Re-runs Gate v2 on a note that fell back to private while the LLM was unavailable |
 | `DELETE` | `/memories/{memory_id}` | Soft-deletes a memory with tombstone replication |
 | `POST` | `/search` | Executes offline hybrid search with Reciprocal Rank Fusion |
 | `POST` | `/assistant/ask` | Queries on-device assistant with streaming SSE & numbered citations |
@@ -424,7 +425,7 @@ curl http://localhost:8080/stats
 | `DELETE` | `/assistant/sessions/{sid}` | Deletes a local chat session |
 | `POST` | `/assistant/messages/{id}/save` | Saves assistant answer as memory with automatic taint tracking |
 | `GET` | `/suggestions` | Lists pending Split & Share proposals (`?status=pending`) |
-| `POST` | `/suggestions/{id}/approve` | Approves sanitized fact for fleet replication |
+| `POST` | `/suggestions/{id}/approve` | Approves sanitized fact for fleet replication (new memory, `gate_source=user_approved`; edits are re-checked for PII, grounding and numbers) |
 | `POST` | `/suggestions/{id}/reject` | Keeps original private and archives proposal |
 | `GET` | `/llm/status` | Checks local Ollama model readiness, warmup state, and p95 latency |
 | `GET` | `/sync/status` | Returns connectivity status, outbox depth, and sync timestamps |
@@ -442,6 +443,7 @@ curl http://localhost:8080/stats
 | `POST` | `/push` | Ingests batched shareable notes from edge outbox (guarded) |
 | `GET` | `/snapshot` | Serves current shard snapshot for initial edge bootstrap |
 | `POST` | `/snapshot/partial` | Serves incremental snapshot updates to connected edge nodes |
+| `GET` | `/pull/records` | Paged delta sync keyed on the server clock (`server_ts`); edges page with `next_offset` and resume from `server_now` |
 | `POST` | `/conflicts/resolve` | Coordinates distributed conflict resolution across fleet |
 | `GET` | `/stats` | Returns fleet stats proving `private_on_server == 0` |
 | `GET` | `/health` | Cluster health check |
@@ -552,7 +554,7 @@ PORT=7001
 DENSE_MODEL=BAAI/bge-small-en-v1.5
 DENSE_DIM=384
 SYNC_API_URL=http://localhost:8080
-OLLAMA_MODEL=gemma3:1b
+OLLAMA_MODEL=qwen2.5:1.5b
 DEDUP_THRESHOLD=0.92
 ROUTINE_TTL_DAYS=14
 ```

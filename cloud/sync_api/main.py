@@ -1,5 +1,7 @@
 import os
 import time
+import threading
+from typing import Optional
 import httpx
 from dotenv import load_dotenv
 load_dotenv()
@@ -74,8 +76,10 @@ def push(body: PushBody):
             found_conflicts.append(conflicts.record("version", item.model_dump(), cur))
             continue
 
-        # 5. Mark synced & handle tombstone
+        # 5. Mark synced & handle tombstone. server_ts is the SERVER's clock: edges pull
+        # by it, so a note edited offline yesterday and pushed today is still delivered.
         pl["sync_state"] = "synced"
+        pl["server_ts"] = _server_ts()
         if item.op == "delete":
             pl["deleted"] = True
 
@@ -90,30 +94,43 @@ def push(body: PushBody):
 
     return {"accepted": accepted, "conflicts": found_conflicts}
 
+_ts_lock = threading.Lock()
+_last_ts = 0
+
+
+def _server_ts() -> int:
+    """Strictly increasing server-clock timestamp (ms)."""
+    global _last_ts
+    with _ts_lock:
+        _last_ts = max(int(time.time() * 1000), _last_ts + 1)
+        return _last_ts
+
+
 @app.get("/pull/records")
-def pull_records(since_ts: int = 0, limit: int = 100):
-    """Fast, lightweight delta sync for edge devices."""
-    flt = models.Filter(
-        must=[
-            models.FieldCondition(key="category", match=models.MatchValue(value="shareable")),
-            models.FieldCondition(key="updated_at", range=models.Range(gte=since_ts))
-        ]
-    )
-    records, _ = q.scroll(
+def pull_records(since_ts: int = 0, limit: int = 100, offset: Optional[str] = None):
+    """Paged delta sync for edge devices, keyed on the server clock (server_ts).
+
+    since_ts=0 is a full pull (also returns records pushed before server_ts existed).
+    Page with `next_offset` until it is null, then pull next time from `server_now`."""
+    must = [models.FieldCondition(key="category", match=models.MatchValue(value="shareable"))]
+    if since_ts > 0:
+        must.append(models.FieldCondition(key="server_ts", range=models.Range(gte=since_ts)))
+    server_now = int(time.time() * 1000)
+    records, next_offset = q.scroll(
         collection_name=COLL,
-        scroll_filter=flt,
-        limit=limit,
+        scroll_filter=models.Filter(must=must),
+        limit=min(limit, 500),
+        offset=offset,
         with_payload=True,
         with_vectors=True
     )
-    points_out = []
-    for r in records:
-        points_out.append({
-            "id": r.id,
-            "payload": r.payload,
-            "vector": r.vector
-        })
-    return {"records": points_out, "count": len(points_out)}
+    points_out = [{"id": r.id, "payload": r.payload, "vector": r.vector} for r in records]
+    return {
+        "records": points_out,
+        "count": len(points_out),
+        "next_offset": str(next_offset) if next_offset is not None else None,
+        "server_now": server_now,
+    }
 
 async def _stream_latest_or_new_snapshot():
     """Retrieve the latest ready shard snapshot, or initiate a new one."""
@@ -151,6 +168,7 @@ def resolve_conflict(req: ResolveConflictRequest):
     if not winner_payload:
         raise HTTPException(status_code=404, detail="Conflict not found")
 
+    winner_payload["server_ts"] = _server_ts()  # so the fleet pulls the resolved version
     q.set_payload(COLL, payload=winner_payload, points=[winner_payload["memory_id"]])
     return {"status": "resolved", "memory_id": winner_payload["memory_id"], "version": winner_payload["version"]}
 

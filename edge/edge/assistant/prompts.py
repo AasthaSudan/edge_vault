@@ -9,6 +9,20 @@ exactly as written. If the notes do not contain the answer, reply exactly:
 
 LABEL = {"shareable": "FLEET", "private": "PRIVATE", "routine": "ROUTINE"}
 
+# One worked exchange showing the citation format. Static, so Ollama reuses its prompt cache.
+EXAMPLE_USER = """NOTES:
+[1] (FLEET · from device-c · 2026-01-10 · K-7) Kiln K-7 fan fix: Kiln K-7 exhaust fan tripping was fixed by replacing the worn drive belt and setting tension to 12 mm deflection.
+[2] (PRIVATE · this device · 2026-01-12) Store room: Store room padlock combination is 5190.
+
+QUESTION: How was the K-7 fan fixed and what is the store room combination?"""
+EXAMPLE_ANSWER = ("The K-7 exhaust fan was fixed by replacing the worn drive belt and setting tension "
+                  "to 12 mm deflection [1]. The store room padlock combination is 5190 [2].")
+REFUSAL_USER = """NOTES:
+[1] (FLEET · from device-c · 2026-01-10 · K-7) Kiln K-7 fan fix: Kiln K-7 exhaust fan tripping was fixed by replacing the worn drive belt.
+
+QUESTION: How do I replace the gearbox on crusher CR-2?"""
+REFUSAL_ANSWER = "I don't have that in this device's memory."
+
 
 def _origin(r: dict) -> str:
     return "this device" if r.get("device_id") == settings.device_id else f"from {r.get('device_id')}"
@@ -42,7 +56,13 @@ def context_block(results: list[dict]) -> tuple[str, list[dict]]:
 
 def build(question: str, results: list[dict], history: list[dict]) -> tuple[list[dict], list[dict]]:
     block, sources = context_block(results)
-    msgs = [{"role": "system", "content": SYSTEM}]
+    msgs = [
+        {"role": "system", "content": SYSTEM},
+        {"role": "user", "content": EXAMPLE_USER},
+        {"role": "assistant", "content": EXAMPLE_ANSWER},
+        {"role": "user", "content": REFUSAL_USER},
+        {"role": "assistant", "content": REFUSAL_ANSWER},
+    ]
     for h in history[-2 * settings.assistant_history_turns:]:
         msgs.append({"role": h["role"], "content": h["content"]})
     notes = block if block else "(no notes found)"
