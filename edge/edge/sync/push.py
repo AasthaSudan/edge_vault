@@ -28,40 +28,51 @@ async def push_once(client: httpx.AsyncClient) -> int:
         return 0
 
     ids = [r["id"] for r in rows]
-    body = {
-        "device_id": settings.device_id,
-        "items": [
-            {
-                "memory_id": r["memory_id"],
-                "op": r["op"],
-                "point": json.loads(r["point_json"]),
-                "version": r["version"],
-                "base_version": r["base_version"]
-            }
-            for r in rows
-        ]
-    }
-
+    acked = False
     try:
+        body = {
+            "device_id": settings.device_id,
+            "items": [
+                {
+                    "memory_id": r["memory_id"],
+                    "op": r["op"],
+                    "point": json.loads(r["point_json"]),
+                    "version": r["version"],
+                    "base_version": r["base_version"]
+                }
+                for r in rows
+            ]
+        }
         resp = await client.post(f"{settings.sync_api_url}/push", json=body, headers=settings.cloud_headers(), timeout=10)
         resp.raise_for_status()
+        result = resp.json()  # {"accepted": [...], "conflicts": [...]}
+
+        # Store the conflicts BEFORE acking: a crash in between must not lose them. If this batch is
+        # re-sent, the server recognises the open conflict and returns it again.
+        conflicts = result.get("conflicts", [])
+        for c in conflicts:
+            is_new = db.execute("SELECT 1 FROM conflicts WHERE id=?", (c["id"],)).fetchone() is None
+            # A device that edits a note again while its conflict is open updates the "local" side
+            # (and drops the cached AI analysis, which was about the older text).
+            db.execute(
+                "INSERT INTO conflicts(id, memory_id, kind, local_json, remote_json, created_at) VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET local_json=excluded.local_json, analysis_json=NULL WHERE conflicts.status='open'",
+                (c["id"], c["memory_id"], c["kind"], json.dumps(c["local"]), json.dumps(c["remote"]), c["created_at"])
+            )
+            if is_new:
+                emit("conflict.opened", c["memory_id"], {"kind": c["kind"]})
+
+        outbox.ack(ids)
+        acked = True
     except Exception as e:
-        outbox.fail(ids, str(e))
+        # Any failure before the ack (network, a non-JSON reply from a proxy, a bad row) must
+        # release the claimed rows, or they stay 'inflight' forever and block pull as well.
+        if not acked:
+            outbox.fail(ids, str(e))
         emit("sync.push.failed", data={"error": str(e)})
         raise
 
-    result = resp.json()  # {"accepted": [...], "conflicts": [...]}
-    outbox.ack(ids)
     _mark_synced(rows, set(result.get("accepted", [])))
-
-    # Ingest conflicts returned by server into local conflicts table
-    conflicts = result.get("conflicts", [])
-    for c in conflicts:
-        db.execute(
-            "INSERT OR IGNORE INTO conflicts(id, memory_id, kind, local_json, remote_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (c["id"], c["memory_id"], c["kind"], json.dumps(c["local"]), json.dumps(c["remote"]), c["created_at"])
-        )
-        emit("conflict.opened", c["memory_id"], {"kind": c["kind"]})
 
     now_ts = int(time.time() * 1000)
     db.execute(
