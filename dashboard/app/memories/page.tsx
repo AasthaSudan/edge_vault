@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   Plus,
@@ -16,11 +17,22 @@ import {
   ArrowLeft,
   FileText,
   ShieldCheck,
+  History,
+  Layers,
 } from "lucide-react";
-import { fetchEdge } from "@/lib/api";
-import { category, errorDetail, explain, timeAgo } from "@/lib/format";
+import { fetchEdge, POLL_MS } from "@/lib/api";
+import { category, errorDetail, explain, plural, timeAgo } from "@/lib/format";
 import { useToast } from "@/components/Providers";
-import { CategoryLabel, EmptyState, Menu, PageHeader, Segmented, Skeleton, cn } from "@/components/ui";
+import {
+  CategoryBadge,
+  EmptyState,
+  IconTile,
+  Menu,
+  PageHeader,
+  Skeleton,
+  Tone,
+  cn,
+} from "@/components/ui";
 
 type Filter = "" | "shareable" | "private" | "routine";
 
@@ -33,9 +45,19 @@ function useDebounced<T>(value: T, ms: number) {
   return v;
 }
 
-export default function NotesPage() {
+// useSearchParams needs a Suspense boundary so the rest of the page can still prerender
+export default function NotesRoute() {
+  return (
+    <Suspense fallback={<Skeleton rows={4} />}>
+      <NotesPage />
+    </Suspense>
+  );
+}
+
+function NotesPage() {
   const qc = useQueryClient();
   const toast = useToast();
+  const params = useSearchParams();
   const [filter, setFilter] = useState<Filter>("");
   const [query, setQuery] = useState("");
   const q = useDebounced(query.trim(), 250);
@@ -43,25 +65,34 @@ export default function NotesPage() {
   const [focusId, setFocusId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
 
-  // /memories?id=… (e.g. from an answer's source) shows that one note
+  // ?id=… shows one note (e.g. an answer's source); ?q=… comes from the header search;
+  // ?new=1 from the header's New note button
   useEffect(() => {
-    const id = new URLSearchParams(window.location.search).get("id");
+    const id = params.get("id");
+    const search = params.get("q");
+    const isNew = params.get("new");
     if (id) {
       setFocusId(id);
       setOpenId(id);
     }
-  }, []);
+    if (search !== null) {
+      setFocusId(null);
+      setQuery(search);
+    }
+    if (isNew) setAdding(true);
+    if (search !== null || isNew) window.history.replaceState(null, "", id ? `/memories?id=${id}` : "/memories");
+  }, [params]);
 
   const { data: stats } = useQuery({
     queryKey: ["local-stats"],
     queryFn: () => fetchEdge("/stats/local"),
-    refetchInterval: 5000,
+    refetchInterval: POLL_MS,
   });
 
   const list = useQuery({
     queryKey: ["memories", "list", filter],
     queryFn: () => fetchEdge(`/memories?limit=200${filter ? `&category=${filter}` : ""}`),
-    refetchInterval: 5000,
+    refetchInterval: POLL_MS,
     enabled: !q && !focusId,
   });
 
@@ -164,11 +195,18 @@ export default function NotesPage() {
     },
   ];
 
+  const filters: { value: Filter; label: string; hint: string; count?: number; icon: typeof FileText; tone: Tone }[] = [
+    { value: "", label: "All notes", hint: "On this device", count: stats?.total, icon: Layers, tone: "accent" },
+    { value: "shareable", label: "Shared", hint: "Visible to your team", count: stats?.shareable, icon: Users, tone: "shared" },
+    { value: "private", label: "Private", hint: "Never leaves this device", count: stats?.private, icon: Lock, tone: "private" },
+    { value: "routine", label: "Temporary", hint: "Deleted after 14 days", count: stats?.routine, icon: Clock, tone: "temp" },
+  ];
+
   return (
     <div>
       <PageHeader
         title="Notes"
-        description="Everything you've logged on this device."
+        description="Everything you've logged on this device, and who can see it."
         actions={
           !adding && (
             <button className="btn btn-primary" onClick={() => setAdding(true)}>
@@ -190,48 +228,67 @@ export default function NotesPage() {
       )}
 
       {focusId ? (
-        <button onClick={showAll} className="btn btn-ghost btn-sm -ml-3 mb-3">
+        <button onClick={showAll} className="btn btn-secondary btn-sm mb-4">
           <ArrowLeft className="w-4 h-4" />
           All notes
         </button>
       ) : (
-        <div className="flex flex-col sm:flex-row gap-3 mb-4">
-          <div className="relative flex-1">
-            <Search className="w-4 h-4 text-faint absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5" role="tablist" aria-label="Filter notes">
+            {filters.map((f) => {
+              const selected = filter === f.value;
+              return (
+                <button
+                  key={f.value || "all"}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => setFilter(f.value)}
+                  className={cn(
+                    "card text-left p-4 flex items-center gap-3 transition-all",
+                    selected ? "ring-2 ring-accent/50 border-accent/40 shadow-lift" : "hover:border-line-strong hover:shadow-lift"
+                  )}
+                >
+                  <IconTile icon={f.icon} tone={f.tone} />
+                  <span className="min-w-0">
+                    <span className="flex items-baseline gap-2">
+                      <span className="text-xl font-semibold tabular-nums leading-none">{f.count ?? "–"}</span>
+                      <span className="text-sm font-medium truncate">{f.label}</span>
+                    </span>
+                    <span className="block text-xs text-muted mt-1 truncate">{f.hint}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="relative mb-4">
+            <Search className="w-4 h-4 text-faint absolute left-4 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by problem, fix or equipment"
-              className="input pl-9 pr-9"
+              aria-label="Search notes"
+              className="input h-12 pl-11 pr-11 rounded-xl shadow-card text-[15px]"
             />
             {query && (
               <button
                 onClick={() => setQuery("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 btn-icon w-6 h-6"
+                className="absolute right-3 top-1/2 -translate-y-1/2 btn-icon w-7 h-7"
                 aria-label="Clear search"
               >
-                <X className="w-3.5 h-3.5" />
+                <X className="w-4 h-4" />
               </button>
             )}
           </div>
-          <div className="scroll-x -mx-4 px-4 sm:mx-0 sm:px-0">
-            <Segmented<Filter>
-              value={filter}
-              onChange={setFilter}
-              options={[
-                { value: "", label: "All", count: stats?.total },
-                { value: "shareable", label: "Shared", count: stats?.shareable },
-                { value: "private", label: "Private", count: stats?.private },
-                { value: "routine", label: "Temporary", count: stats?.routine },
-              ]}
-            />
-          </div>
-        </div>
+        </>
       )}
 
-      {q && !focusId && (
-        <p className="text-sm text-muted mb-3">
-          {search.isFetching && !search.data ? "Searching…" : `Best matches for “${q}”`}
+      {q && !focusId && !active.isLoading && (
+        <p className="mb-3 px-1 text-xs text-muted">
+          {search.isFetching && !search.data
+            ? "Searching…"
+            : `${plural(notes.length, "best match", "best matches")} for “${q}”`}
         </p>
       )}
 
@@ -247,7 +304,16 @@ export default function NotesPage() {
             Try different words, or check the spelling of an equipment tag.
           </EmptyState>
         ) : (
-          <EmptyState icon={FileText} title="No notes yet">
+          <EmptyState
+            icon={FileText}
+            title="No notes yet"
+            action={
+              <button className="btn btn-primary" onClick={() => setAdding(true)}>
+                <Plus className="w-4 h-4" />
+                Write your first note
+              </button>
+            }
+          >
             Log what you observe and fix. EdgeVault keeps anything sensitive on this device.
           </EmptyState>
         )
@@ -285,7 +351,9 @@ function NoteRow({
   const when = m.updated_at || m.created_at;
 
   return (
-    <li className="first:rounded-t-xl last:rounded-b-xl hover:bg-subtle/60 transition-colors">
+    <li
+      className={cn("first:rounded-t-2xl last:rounded-b-2xl transition-colors", open ? "bg-subtle/50" : "hover:bg-subtle/40")}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -297,15 +365,13 @@ function NoteRow({
             onToggle();
           }
         }}
-        className="flex items-start gap-4 px-4 sm:px-5 py-4 cursor-pointer"
+        className="flex items-start gap-4 pl-5 pr-3 sm:pr-4 py-4 cursor-pointer"
       >
         <div className="flex-1 min-w-0">
-          {m.title && <div className="text-sm font-medium mb-0.5">{m.title}</div>}
-          <p className={cn("text-sm leading-relaxed", m.title ? "text-muted" : "text-fg", !open && "line-clamp-2")}>
-            {m.text}
-          </p>
+          {m.title && <div className="text-sm font-semibold mb-0.5">{m.title}</div>}
+          <p className={cn("text-sm leading-relaxed", m.title ? "text-muted" : "text-fg", !open && "line-clamp-2")}>{m.text}</p>
 
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2 text-xs text-muted">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 mt-2.5 text-xs text-muted">
             {m.asset_tag && <span className="tag">{m.asset_tag}</span>}
             <span>
               {m.author ? `${m.author} · ` : ""}
@@ -318,14 +384,14 @@ function NoteRow({
               </span>
             )}
             {m.sync_state === "pending" && (
-              <span className="inline-flex items-center gap-1 text-warn">
+              <span className="inline-flex items-center gap-1 rounded-full bg-warn/10 px-2 h-5 text-warn">
                 <Clock className="w-3 h-3" />
                 Waiting to sync
               </span>
             )}
             {m.fleet_verified && (
               <span
-                className="inline-flex items-center gap-1 text-ok"
+                className="inline-flex items-center gap-1 rounded-full bg-ok/10 px-2 h-5 text-ok"
                 title={`Also reported by: ${(m.corroborated_by || []).join(", ")}`}
               >
                 <BadgeCheck className="w-3.5 h-3.5" />
@@ -335,42 +401,62 @@ function NoteRow({
           </div>
         </div>
 
-        <div className="flex items-center gap-1 shrink-0 -mr-2">
-          {!checking && <CategoryLabel value={m.category} className="hidden sm:inline-flex" />}
+        <div className="flex items-center gap-1.5 shrink-0">
+          {!checking && <CategoryBadge value={m.category} className="hidden sm:inline-flex" />}
           <span className={cn("sm:hidden w-2 h-2 rounded-full mr-1", c.dot)} title={c.label} />
           <Menu items={actions} />
         </div>
       </div>
 
       {open && (
-        <dl className="mx-4 sm:mx-5 mb-4 -mt-1 grid sm:grid-cols-2 gap-x-6 gap-y-3 rounded-lg bg-subtle px-4 py-3 text-sm animate-fade-in">
-          <div className="sm:col-span-2">
-            <dt className="text-xs text-muted">Why it&apos;s {c.label.toLowerCase()}</dt>
-            <dd className="mt-0.5">{explain(m)}</dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted">Who can see it</dt>
-            <dd className="mt-0.5">{c.hint}</dd>
-          </div>
+        <div className="grid sm:grid-cols-3 gap-3 px-5 pb-4 -mt-1 animate-fade-in">
+          <Detail icon={ShieldCheck} label={`Why it's ${c.label.toLowerCase()}`} className="sm:col-span-2">
+            {explain(m)}
+          </Detail>
           {m.expires_at ? (
-            <div>
-              <dt className="text-xs text-muted">Deleted on</dt>
-              <dd className="mt-0.5">{new Date(Number(m.expires_at)).toLocaleDateString()}</dd>
-            </div>
+            <Detail icon={Clock} label="Deleted on">
+              {new Date(Number(m.expires_at)).toLocaleDateString()}
+            </Detail>
           ) : (
-            <div>
-              <dt className="text-xs text-muted">Edits</dt>
-              <dd className="mt-0.5">
-                {m.version > 1 ? `Edited ${m.version - 1} time${m.version === 2 ? "" : "s"}` : "Original"}
-                {m.merged_from?.length ? ` · merged ${m.merged_from.length} similar` : ""}
-              </dd>
-            </div>
+            <Detail icon={History} label="Edits">
+              {m.version > 1 ? `Edited ${m.version - 1} time${m.version === 2 ? "" : "s"}` : "Original"}
+              {m.merged_from?.length ? ` · merged ${m.merged_from.length} similar` : ""}
+            </Detail>
           )}
-        </dl>
+        </div>
       )}
     </li>
   );
 }
+
+function Detail({
+  icon: Icon,
+  label,
+  children,
+  className,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn("rounded-xl bg-surface ring-1 ring-line px-4 py-3", className)}>
+      <div className="flex items-center gap-1.5 text-xs text-muted">
+        <Icon className="w-3.5 h-3.5" />
+        {label}
+      </div>
+      <div className="text-sm mt-1">{children}</div>
+    </div>
+  );
+}
+
+const VISIBILITY: { value: string; label: string; hint: string; icon: typeof Users; tone: Tone }[] = [
+  { value: "auto", label: "Decide for me", hint: "The on-device AI checks it", icon: Sparkles, tone: "accent" },
+  { value: "shareable", label: "My team", hint: "Shared when it's safe", icon: Users, tone: "shared" },
+  { value: "private", label: "Only me", hint: "Stays on this device", icon: Lock, tone: "private" },
+  { value: "routine", label: "Only me, 14 days", hint: "Then deleted", icon: Clock, tone: "temp" },
+];
 
 function NewNoteForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
@@ -404,64 +490,93 @@ function NewNoteForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         e.preventDefault();
         if (text.trim()) create.mutate();
       }}
-      className="card p-5 mb-6 space-y-4 animate-fade-in"
+      className="card mb-6 animate-fade-in overflow-hidden"
     >
-      <div>
-        <label htmlFor="note-text" className="label">
-          Note
-        </label>
-        <textarea
-          id="note-text"
-          autoFocus
-          rows={4}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="What did you observe, fix or learn?"
-          className="input"
-          onKeyDown={(e) => e.key === "Escape" && onClose()}
-        />
+      <div className="flex items-center gap-3 px-5 sm:px-6 py-4 border-b border-line bg-subtle/40">
+        <IconTile icon={Plus} size="sm" />
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold">New note</h2>
+          <p className="text-xs text-muted">What did you observe, fix or learn?</p>
+        </div>
+        <button type="button" onClick={onClose} className="btn-icon" aria-label="Close">
+          <X className="w-4 h-4" />
+        </button>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-3">
+      <div className="p-5 sm:p-6 space-y-5">
         <div>
-          <label htmlFor="note-title" className="label">
-            Title <span className="text-faint font-normal">(optional)</span>
+          <label htmlFor="note-text" className="label">
+            Note
           </label>
-          <input id="note-title" value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
-        </div>
-        <div>
-          <label htmlFor="note-asset" className="label">
-            Equipment <span className="text-faint font-normal">(optional)</span>
-          </label>
-          <input
-            id="note-asset"
-            value={asset}
-            onChange={(e) => setAsset(e.target.value)}
-            placeholder="e.g. P-200"
-            className="input uppercase placeholder:normal-case"
+          <textarea
+            id="note-text"
+            autoFocus
+            rows={4}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="e.g. P-200 seal leak fixed by replacing the lip seal with a Viton seal."
+            className="input"
+            onKeyDown={(e) => e.key === "Escape" && onClose()}
           />
         </div>
-        <div>
-          <label htmlFor="note-visibility" className="label">
-            Who can see it
-          </label>
-          <select
-            id="note-visibility"
-            value={visibility}
-            onChange={(e) => setVisibility(e.target.value)}
-            className="input pr-8"
-          >
-            <option value="auto">Decide for me</option>
-            <option value="shareable">My team</option>
-            <option value="private">Only me</option>
-            <option value="routine">Only me, for 14 days</option>
-          </select>
+
+        <div className="grid sm:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="note-title" className="label">
+              Title <span className="text-faint font-normal">(optional)</span>
+            </label>
+            <input id="note-title" value={title} onChange={(e) => setTitle(e.target.value)} className="input" />
+          </div>
+          <div>
+            <label htmlFor="note-asset" className="label">
+              Equipment <span className="text-faint font-normal">(optional)</span>
+            </label>
+            <input
+              id="note-asset"
+              value={asset}
+              onChange={(e) => setAsset(e.target.value)}
+              placeholder="e.g. P-200"
+              className="input uppercase placeholder:normal-case"
+            />
+          </div>
         </div>
+
+        <fieldset>
+          <legend className="label">Who can see it</legend>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+            {VISIBILITY.map((v) => {
+              const selected = visibility === v.value;
+              return (
+                <label
+                  key={v.value}
+                  className={cn(
+                    "relative flex items-start gap-3 rounded-xl border p-3 cursor-pointer transition-all",
+                    selected ? "border-accent/50 ring-2 ring-accent/30 bg-accent/5" : "border-line hover:border-line-strong"
+                  )}
+                >
+                  <input
+                    type="radio"
+                    name="visibility"
+                    value={v.value}
+                    checked={selected}
+                    onChange={() => setVisibility(v.value)}
+                    className="sr-only"
+                  />
+                  <IconTile icon={v.icon} tone={v.tone} size="sm" />
+                  <span className="min-w-0">
+                    <span className="block text-sm font-medium">{v.label}</span>
+                    <span className="block text-xs text-muted">{v.hint}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        </fieldset>
       </div>
 
-      <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 pt-1">
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center justify-between gap-3 px-5 sm:px-6 py-4 border-t border-line bg-subtle/40">
         <p className="flex items-center gap-1.5 text-xs text-muted">
-          <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+          <ShieldCheck className="w-3.5 h-3.5 shrink-0 text-ok" />
           Passwords, codes and personal details are never shared, whatever you pick.
         </p>
         <div className="flex gap-2 justify-end">

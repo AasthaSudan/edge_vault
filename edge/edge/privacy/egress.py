@@ -7,7 +7,7 @@ from edge.llm.client import PrivacyError
 
 
 def _wire(vectors: dict) -> dict:
-    """Wire format that Phase 3 push/cloud expect."""
+    """Wire format that the push worker and cloud API expect."""
     sp = vectors["bm25"]
     indices = list(sp.indices) if hasattr(sp, "indices") else list(sp.get("indices", []))
     values = list(sp.values) if hasattr(sp, "values") else list(sp.get("values", []))

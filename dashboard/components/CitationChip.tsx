@@ -28,8 +28,8 @@ export function CitationChip({
       title={title}
       className={cn(
         "inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 mx-0.5 rounded-md align-[2px]",
-        "text-[11px] font-semibold leading-none bg-subtle border border-line transition-colors hover:border-line-strong",
-        c.text
+        "text-[11px] font-semibold leading-none text-fg border border-transparent transition-colors hover:border-line-strong",
+        c.soft
       )}
     >
       {n}

@@ -1,4 +1,4 @@
-"""Gate Evaluation Suite (Phase 2 & Phase 5, spec §9.1-9.2).
+"""Gate Evaluation Suite.
 
 Runs every note 5 times, twice:
   A. baseline: no technician corrections on the device

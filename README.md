@@ -219,7 +219,7 @@ sequenceDiagram
 - **Cloud Category Guard**: The Cloud Sync API rejects any payload where `category != "shareable"`, mathematically ensuring that private data never reaches the central cluster.
 - **AI Conflict Reconciliation**: When two devices' edits collide, the on-device LLM explains in one sentence whether it is a *progression over time* ("normal on Mon, leaking on Wed"), a *genuine contradiction* (25 Nm vs 20 Nm) or the *same fact reworded*, and recommends a resolution. Deterministic checks catch differing values and opposite instructions the small model misses; the technician still decides.
 - **Cross-Device Corroboration ("Fleet Verified")**: When independent devices report the same fact about the same asset, the cloud links the notes and marks them `fleet_verified` with the reporting devices. Reports with different values or opposite wording are never counted as agreement. The assistant states verification from data: "[1] is fleet verified: reported independently by 2 devices".
-- **Deployment-Ready Cloud**: Fleet API key on all data endpoints, explicit CORS, production mode that refuses insecure config, non-root Docker image with health checks, and a production compose file. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- **Deployment-Ready Cloud**: Fleet API key on all data endpoints, explicit CORS, production mode that refuses insecure config, non-root Docker image with health checks, and a production compose file.
 - **Clean Enterprise Dashboard**: Built with Next.js 14 App Router and Tailwind CSS. Features an executive dark slate palette, 32px engineering grid overlay, zero neon clutter, live Server-Sent Events (SSE) stream, and an offline network simulation toggle.
 
 ---
@@ -231,7 +231,7 @@ sequenceDiagram
 - **Python 3.11+**
 - **Node.js 18+** & **npm**
 - **Docker & Docker Compose** (for central Qdrant server)
-- *(Optional for Phase 5)* **Ollama** running locally with `ollama pull qwen2.5:1.5b` or `ollama pull gemma3:1b`
+- *(Optional, for the on-device AI)* **Ollama** running locally with `ollama pull qwen2.5:1.5b` or `ollama pull gemma3:1b`
 
 ### 1. Setup
 
@@ -480,7 +480,7 @@ make lint-imports
 
 # Edge-cloud sync integration (push/pull, conflicts, tombstones, contradictions). Needs a cloud API + Qdrant.
 # It pushes test notes: point SYNC_API_URL / QDRANT_URL at a throwaway cloud, never your fleet.
-make test-p3
+make test-sync
 
 # Run complete end-to-end multi-device replication demo
 make demo
@@ -494,19 +494,6 @@ Tests never write into a real device: `edge/tests/conftest.py` defaults `DEVICE_
 
 ---
 
-## Phase Specifications & Architecture Docs
-
-Detailed architectural specifications, verification benchmarks, and design blueprints are organized in [`docs/`](docs/):
-
-- [Phase 1: Edge Core](docs/PHASE_1_EDGE_CORE.md) — Local hybrid vector search, dual shards, sub-50ms CPU execution.
-- [Phase 2: AI Memory Gate & Evolving Memory](docs/PHASE_2_MEMORY_GATE.md) — Regex PII filter, local LLM classifier, dedup, and TTL.
-- [Phase 3: Edge-Cloud Sync & Conflicts](docs/PHASE_3_EDGE_CLOUD_SYNC.md) — SQLite WAL outbox, push-before-pull sync, distributed conflict resolution.
-- [Phase 4: Dashboard, Observability & Demo](docs/PHASE_4_DASHBOARD_DEMO.md) — Next.js 14 console, live SSE stream, privacy audit proof.
-- [Phase 5: Local Intelligence Layer (On-Device LLM)](docs/PHASE_5_LOCAL_INTELLIGENCE.md) — Context-aware Gate v2, Offline Assistant with citations, Split & Share inbox, Egress guard, Taint rules.
-- [Deployment Guide](docs/DEPLOYMENT.md) — Production cloud stack (Docker, HTTPS, fleet key), edge device install on Windows, release checklist.
-
----
-
 ## Project Structure
 
 ```
@@ -517,12 +504,6 @@ edge_vault/
 ├── .env.example                  # Root environment template
 ├── .env                          # Active root environment configuration
 ├── .importlinter                 # Architectural privacy contracts (NFR-13)
-├── docs/                         # Phase specifications & architecture documentation
-│   ├── PHASE_1_EDGE_CORE.md
-│   ├── PHASE_2_MEMORY_GATE.md
-│   ├── PHASE_3_EDGE_CLOUD_SYNC.md
-│   ├── PHASE_4_DASHBOARD_DEMO.md
-│   └── PHASE_5_LOCAL_INTELLIGENCE.md
 │
 ├── edge/                         # Edge Node Service (FastAPI :7001)
 │   ├── .env.example              # Edge-specific env template

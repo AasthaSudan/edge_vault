@@ -12,6 +12,28 @@ _STOP = {"the", "and", "was", "were", "with", "for", "from", "that", "this", "wh
          "you", "your", "are", "has", "have", "had", "its", "into", "when", "then", "to", "is", "by"}
 ATTRIBUTE_MIN = 0.5  # share of a sentence's content words that must come from one note
 
+# Greetings, thanks and goodbyes: answered directly, without searching notes. Exact phrases
+# only, so a short real question ("hi, P-200 seal?") still goes through retrieval.
+_GREETING = {"hi", "hii", "hey", "hello", "hiya", "yo", "sup", "whats up", "how are you",
+             "good morning", "good afternoon", "good evening", "hi there", "hello there", "hey there"}
+_THANKS = {"thanks", "thank you", "thanks a lot", "thank you so much", "thx", "ty", "ok thanks", "okay thanks"}
+_ACK = {"ok", "okay", "cool", "great", "nice", "got it"}
+_BYE = {"bye", "goodbye", "bye bye", "see you", "see ya"}
+
+
+def small_talk_reply(question: str) -> str | None:
+    q = re.sub(r"[^a-z ]", "", question.lower()).strip()
+    q = re.sub(r"\s+", " ", q)
+    if q in _GREETING:
+        return "Hi! Ask me about your equipment, fixes or procedures, and I'll answer from your notes with sources."
+    if q in _THANKS:
+        return "You're welcome. Ask me anything else about your equipment."
+    if q in _ACK:
+        return "Got it. Ask me anything else about your equipment."
+    if q in _BYE:
+        return "Bye! Your notes stay on this device."
+    return None
+
 
 def _tokens(t: str) -> set[str]:
     return {w.lower().rstrip(".") for w in _WORD.findall(t) if len(w) >= 3 and w.lower() not in _STOP}
@@ -103,7 +125,24 @@ def ask(session_id: str | None, question: str, scope: str = "device"):
     t0 = time.perf_counter()
     session_id = session_id or S.create(title=question[:60], scope=scope)
     history = S.history(session_id)
-    prev_q = next((h["content"] for h in reversed(history) if h["role"] == "user"), None)
+
+    reply = small_talk_reply(question)
+    if reply is not None:
+        # Nothing to look up: no sources, so the answer can't borrow unrelated notes
+        yield {"type": "sources", "session_id": session_id, "sources": [], "retrieve_ms": 0}
+        yield {"type": "token", "text": reply}
+        latency = {"retrieve": 0, "first_token": None, "total": round((time.perf_counter() - t0) * 1000, 1)}
+        S.add(session_id, "user", question)
+        msg_id = S.add(session_id, "assistant", reply, sources=[], cited=[], latency=latency)
+        emit("assistant.answered", None, {"sources": 0, "cited": 0, "grounded": True, "latency": latency, "scope": scope})
+        yield {"type": "done", "message_id": msg_id, "text": reply, "attributed": False, "replaced": None,
+               "cited_ns": [], "cited": [], "grounded": True, "latency_ms": latency}
+        return
+
+    # A short follow-up ("and the torque?") is searched together with the last real question;
+    # small talk in between must not become that context
+    prev_q = next((h["content"] for h in reversed(history)
+                   if h["role"] == "user" and small_talk_reply(h["content"]) is None), None)
 
     got = R.retrieve(question, scope=scope, prev_question=prev_q)
     msgs, sources = P.build(question, got["results"], history)

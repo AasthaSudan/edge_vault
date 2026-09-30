@@ -1,4 +1,4 @@
-"""Verification suite for Phase 1 Edge Core:
+"""Verification suite for the Edge Core:
 1. Hybrid search accuracy across private and shared shards
 2. BM25 vs Dense comparison on exact asset tags (e.g., P-200)
 3. p95 latency benchmark across 50 consecutive queries (target: < 50 ms)
@@ -114,11 +114,11 @@ def test_tombstone_deletion():
     print("Test 4 PASSED: Deleted tombstone successfully excluded from search.")
 
 if __name__ == "__main__":
-    print("Starting Edge Core Phase 1 Validation Suite...")
+    print("Starting Edge Core Validation Suite...")
     test_search_accuracy()
     test_bm25_vs_dense()
     test_p95_latency_benchmark(50)
     test_tombstone_deletion()
     print("\n==========================================")
-    print("ALL PHASE 1 CRITERIA SUCCESSFULLY VERIFIED!")
+    print("ALL EDGE CORE CRITERIA SUCCESSFULLY VERIFIED!")
     print("==========================================")

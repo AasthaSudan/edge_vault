@@ -1,4 +1,4 @@
-.PHONY: setup provision run cloud edge-a edge-b ui-a ui-b seed reset clean test test-unit lint-imports eval-gate eval-assistant eval-reconcile test-p2 test-p3 demo
+.PHONY: setup provision run cloud edge-a edge-b ui-a ui-b seed reset clean test test-unit lint-imports eval-gate eval-assistant eval-reconcile test-integration test-sync demo
 
 # The venv keeps its executables in Scripts/ on Windows and bin/ elsewhere
 ifeq ($(OS),Windows_NT)
@@ -36,13 +36,13 @@ edge-b:
 
 ui-a:
 	@echo "Starting Dashboard for Device A on http://localhost:3000..."
-	cd dashboard && NEXT_PUBLIC_EDGE_API=http://localhost:7001 NEXT_PUBLIC_CLOUD_API=http://localhost:8080 PORT=3000 npm run dev
+	cd dashboard && NEXT_PUBLIC_EDGE_API=http://127.0.0.1:7001 NEXT_PUBLIC_CLOUD_API=http://127.0.0.1:8080 PORT=3000 npm run dev
 
 ui-b:
 	@echo "Starting Dashboard for Device B on http://localhost:3001..."
 	# NEXT_DIST_DIR: NEXT_PUBLIC_* values are baked into the build, so two dev servers sharing ".next"
 	# would serve each other's bundles and Device B's dashboard could talk to Device A's edge
-	cd dashboard && NEXT_DIST_DIR=.next-b NEXT_PUBLIC_EDGE_API=http://localhost:7002 NEXT_PUBLIC_CLOUD_API=http://localhost:8080 PORT=3001 npm run dev -- -p 3001
+	cd dashboard && NEXT_DIST_DIR=.next-b NEXT_PUBLIC_EDGE_API=http://127.0.0.1:7002 NEXT_PUBLIC_CLOUD_API=http://127.0.0.1:8080 PORT=3001 npm run dev -- -p 3001
 
 seed:
 	@echo "Seeding rehearsed demo memories..."
@@ -64,7 +64,7 @@ reset:
 	@echo "Reset complete. Clean demo fleet ready!"
 
 test:
-	@echo "Running Phase 1 validation benchmark suite..."
+	@echo "Running the search validation benchmark suite..."
 	PYTHONPATH=edge $(PYTHON) edge/tests/test_search.py
 
 test-unit:
@@ -76,7 +76,7 @@ lint-imports:
 	PYTHONPATH=edge $(VENV_BIN)/lint-imports
 
 eval-gate:
-	@echo "Running Phase 2 AI Memory Gate evaluation suite..."
+	@echo "Running the AI Memory Gate evaluation suite..."
 	PYTHONPATH=edge $(PYTHON) edge/tests/eval_gate.py
 
 eval-assistant:
@@ -87,12 +87,12 @@ eval-reconcile:
 	@echo "Running the conflict reconciliation evaluation (needs Ollama)..."
 	PYTHONPATH=edge $(PYTHON) edge/tests/eval_reconcile.py
 
-test-p2:
-	@echo "Running Phase 2 integration tests (PII, dedup, override)..."
-	PYTHONPATH=edge $(PYTHON) edge/tests/test_phase2_integration.py
+test-integration:
+	@echo "Running integration tests (PII, dedup, override)..."
+	PYTHONPATH=edge $(PYTHON) edge/tests/test_integration.py
 
-test-p3:
-	@echo "Running Phase 3 Edge-Cloud Sync & Conflict test suite..."
+test-sync:
+	@echo "Running the edge-cloud sync & conflict test suite..."
 	PYTHONPATH=edge $(PYTHON) edge/tests/test_sync.py
 
 demo:

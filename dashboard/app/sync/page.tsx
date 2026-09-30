@@ -3,17 +3,29 @@
 import React, { useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { CloudOff, CloudUpload, CheckCircle2, RefreshCw, ChevronDown, ArrowRight } from "lucide-react";
-import { fetchEdge } from "@/lib/api";
+import {
+  Activity,
+  ArrowDownToLine,
+  ArrowUpFromLine,
+  CheckCircle2,
+  ChevronDown,
+  CloudOff,
+  CloudUpload,
+  ListOrdered,
+  RefreshCw,
+  Trash2,
+  Upload,
+} from "lucide-react";
+import { fetchEdge, POLL_MS } from "@/lib/api";
 import { errorDetail, plural, timeAgo } from "@/lib/format";
 import { useToast } from "@/components/Providers";
 import { PrivacyCheck } from "@/components/PrivacyCheck";
-import { PageHeader, cn } from "@/components/ui";
+import { IconTile, PageHeader, Tone, cn } from "@/components/ui";
 
 const QUEUE_STATUS: Record<string, { label: string; cls: string }> = {
-  pending: { label: "Waiting", cls: "text-warn" },
-  inflight: { label: "Sending", cls: "text-accent" },
-  done: { label: "Sent", cls: "text-muted" },
+  pending: { label: "Waiting", cls: "bg-warn/10 text-warn" },
+  inflight: { label: "Sending", cls: "bg-accent/10 text-accent" },
+  done: { label: "Sent", cls: "bg-ok/10 text-ok" },
 };
 
 export default function SyncPage() {
@@ -24,12 +36,12 @@ export default function SyncPage() {
   const { data: status } = useQuery({
     queryKey: ["sync-status"],
     queryFn: () => fetchEdge("/sync/status"),
-    refetchInterval: 2500,
+    refetchInterval: POLL_MS,
   });
   const { data: queue } = useQuery({
     queryKey: ["outbox"],
     queryFn: () => fetchEdge("/sync/outbox"),
-    refetchInterval: 2500,
+    refetchInterval: POLL_MS,
     enabled: showQueue,
   });
 
@@ -54,10 +66,10 @@ export default function SyncPage() {
   const offline = !!status?.forced_offline;
   const waiting = status?.outbox_depth ?? 0;
 
-  const hero = offline
+  const hero: { icon: typeof CloudOff; tone: Tone; title: string; body: string } = offline
     ? {
         icon: CloudOff,
-        tone: "bg-warn/10 text-warn",
+        tone: "warn",
         title: "You're offline",
         body: waiting
           ? `${plural(waiting, "note")} will sync as soon as you're back online.`
@@ -66,30 +78,42 @@ export default function SyncPage() {
     : waiting > 0
     ? {
         icon: CloudUpload,
-        tone: "bg-accent/10 text-accent",
+        tone: "shared",
         title: `${plural(waiting, "note")} waiting to sync`,
         body: "They'll be sent automatically in a moment, or you can sync now.",
       }
     : {
         icon: CheckCircle2,
-        tone: "bg-ok/10 text-ok",
+        tone: "ok",
         title: "Everything is up to date",
         body: "Your shared notes match your team's.",
       };
-  const Icon = hero.icon;
 
   return (
     <div className="space-y-6">
-      <PageHeader title="Sync" description="Keep your shared notes in step with your team." />
+      <PageHeader
+        title="Sync"
+        description="Keep your shared notes in step with your team."
+        actions={
+          // Desktop has Activity in the sidebar
+          <Link href="/activity" className="btn btn-secondary lg:hidden">
+            <Activity className="w-4 h-4" />
+            Activity log
+          </Link>
+        }
+      />
 
-      <div className="card p-6">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-5">
-          <div className={cn("w-11 h-11 rounded-full flex items-center justify-center shrink-0", hero.tone)}>
-            <Icon className="w-5 h-5" />
-          </div>
+      <section className="card">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-5 p-6">
+          <span className="relative w-fit">
+            {(waiting > 0 || syncNow.isPending) && !offline && (
+              <span className="absolute inset-0 rounded-2xl bg-shared/20 animate-ping" />
+            )}
+            <IconTile icon={hero.icon} tone={hero.tone} size="lg" className="relative" />
+          </span>
           <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold tracking-tight">{hero.title}</h2>
-            <p className="text-sm text-muted mt-0.5">{hero.body}</p>
+            <h2 className="text-xl font-semibold tracking-tight">{hero.title}</h2>
+            <p className="text-sm text-muted mt-1">{hero.body}</p>
           </div>
           {offline ? (
             <button onClick={() => goOnline.mutate()} disabled={goOnline.isPending} className="btn btn-primary">
@@ -106,66 +130,69 @@ export default function SyncPage() {
             </button>
           )}
         </div>
-
-        <div className="flex flex-wrap gap-x-8 gap-y-2 mt-6 pt-5 border-t border-line text-sm">
-          <div>
-            <span className="text-muted">Last sent </span>
+        <div className="flex flex-wrap gap-x-8 gap-y-2 px-6 py-3.5 border-t border-line text-sm">
+          <span className="inline-flex items-center gap-2">
+            <ArrowUpFromLine className="w-4 h-4 text-faint" />
+            <span className="text-muted">Last sent</span>
             {timeAgo(status?.last_push_at)}
-          </div>
-          <div>
-            <span className="text-muted">Last received </span>
+          </span>
+          <span className="inline-flex items-center gap-2">
+            <ArrowDownToLine className="w-4 h-4 text-faint" />
+            <span className="text-muted">Last received</span>
             {timeAgo(status?.last_pull_at)}
-          </div>
+          </span>
         </div>
-      </div>
+      </section>
 
       <PrivacyCheck detailed />
 
-      <div className="flex items-center justify-between">
+      <section className="card">
         <button
           onClick={() => setShowQueue((v) => !v)}
-          className="inline-flex items-center gap-1.5 text-sm text-muted hover:text-fg"
+          aria-expanded={showQueue}
+          className="w-full flex items-center gap-3 px-5 py-4 text-left"
         >
-          <ChevronDown className={cn("w-4 h-4 transition-transform", !showQueue && "-rotate-90")} />
-          {showQueue ? "Hide details" : "Show details"}
+          <IconTile icon={ListOrdered} tone="neutral" size="sm" />
+          <span className="flex-1 min-w-0">
+            <span className="block text-sm font-semibold">Sync queue</span>
+            <span className="block text-xs text-muted">
+              Recent changes sent to your team. The queue is saved on disk, so nothing is lost if the device restarts.
+            </span>
+          </span>
+          <ChevronDown className={cn("w-4 h-4 text-muted transition-transform", !showQueue && "-rotate-90")} />
         </button>
-        <Link href="/activity" className="inline-flex items-center gap-1 text-sm text-muted hover:text-fg">
-          Activity log
-          <ArrowRight className="w-4 h-4" />
-        </Link>
-      </div>
 
-      {showQueue && (
-        <div className="card overflow-hidden animate-fade-in">
-          <div className="px-5 py-3 border-b border-line text-xs text-muted">
-            Recent changes sent to your team. The queue is saved on disk, so nothing is lost if the device restarts.
+        {showQueue && (
+          <div className="border-t border-line animate-fade-in">
+            {!Array.isArray(queue) || queue.length === 0 ? (
+              <p className="px-5 py-10 text-center text-sm text-muted">No recent changes.</p>
+            ) : (
+              <ul className="divide-y divide-line">
+                {queue.map((row: any) => {
+                  // A failed send goes back to pending with its attempt count raised
+                  const s =
+                    row.status === "pending" && row.attempts > 0
+                      ? { label: "Retrying", cls: "bg-danger/10 text-danger" }
+                      : QUEUE_STATUS[row.status] ?? { label: row.status, cls: "bg-subtle text-muted" };
+                  const removal = row.op === "delete";
+                  return (
+                    <li key={row.id} className="flex items-center gap-4 px-5 py-3 text-sm">
+                      <IconTile icon={removal ? Trash2 : Upload} tone={removal ? "danger" : "accent"} size="sm" />
+                      <span className="w-20 shrink-0 font-medium">{removal ? "Removal" : "Update"}</span>
+                      <span className="flex-1 min-w-0 truncate font-mono text-xs text-muted" title={row.memory_id}>
+                        {row.memory_id.slice(0, 8)}
+                        {row.last_error && <span className="text-danger font-sans ml-2">{row.last_error}</span>}
+                      </span>
+                      <span className="hidden sm:block text-xs text-muted w-24 text-right">{timeAgo(row.created_at)}</span>
+                      <span className={cn("inline-flex items-center h-6 px-2.5 rounded-full text-xs font-medium", s.cls)}>{s.label}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
           </div>
-          {!Array.isArray(queue) || queue.length === 0 ? (
-            <p className="px-5 py-8 text-center text-sm text-muted">No recent changes.</p>
-          ) : (
-            <ul className="divide-y divide-line">
-              {queue.map((row: any) => {
-                // A failed send goes back to pending with its attempt count raised
-                const s =
-                  row.status === "pending" && row.attempts > 0
-                    ? { label: "Retrying", cls: "text-danger" }
-                    : QUEUE_STATUS[row.status] ?? { label: row.status, cls: "text-muted" };
-                return (
-                  <li key={row.id} className="flex items-center gap-4 px-5 py-3 text-sm">
-                    <span className="w-20 shrink-0">{row.op === "delete" ? "Removal" : "Update"}</span>
-                    <span className="flex-1 min-w-0 truncate font-mono text-xs text-muted" title={row.memory_id}>
-                      {row.memory_id.slice(0, 8)}
-                      {row.last_error && <span className="text-danger font-sans ml-2">{row.last_error}</span>}
-                    </span>
-                    <span className="hidden sm:block text-xs text-muted w-24 text-right">{timeAgo(row.created_at)}</span>
-                    <span className={cn("text-xs font-medium w-16 text-right", s.cls)}>{s.label}</span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      )}
+        )}
+      </section>
     </div>
   );
 }

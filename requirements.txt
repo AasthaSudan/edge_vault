@@ -5,7 +5,7 @@ numpy>=1.21.0
 ollama>=0.2.0
 python-dotenv>=1.0.0
 
-# Dev / verification (Phase 5 privacy tests + architectural contract)
+# Dev / verification (privacy tests + architectural contract)
 pytest>=8.0
 pytest-socket>=0.7
 import-linter>=2.0

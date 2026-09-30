@@ -4,9 +4,9 @@ import React, { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, Monitor, Moon, Sun } from "lucide-react";
-import { fetchEdge } from "@/lib/api";
+import { fetchEdge, POLL_MS } from "@/lib/api";
 import { plural } from "@/lib/format";
-import { cn, Segmented } from "./ui";
+import { Avatar, cn, Segmented, StatusDot } from "./ui";
 
 type Theme = "system" | "light" | "dark";
 
@@ -54,17 +54,17 @@ export function StatusMenu() {
   const { data: sync, isError: edgeDown } = useQuery({
     queryKey: ["sync-status"],
     queryFn: () => fetchEdge("/sync/status"),
-    refetchInterval: 2500,
+    refetchInterval: POLL_MS,
   });
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: () => fetchEdge("/health"),
-    refetchInterval: 15000,
+    refetchInterval: POLL_MS,
   });
   const { data: llm, isError: llmDown } = useQuery({
     queryKey: ["llm-status"],
     queryFn: () => fetchEdge("/llm/status"),
-    refetchInterval: 5000,
+    refetchInterval: 15_000, // no edge event when Ollama loads or unloads the model
   });
 
   const offlineMutation = useMutation({
@@ -91,9 +91,9 @@ export function StatusMenu() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className="inline-flex items-center gap-2 h-8 pl-2.5 pr-2 rounded-lg border border-line bg-surface text-[13px] font-medium hover:bg-subtle transition-colors"
+        className="inline-flex items-center gap-2 h-8 pl-3 pr-2 rounded-full border border-line bg-surface text-[13px] font-medium shadow-card hover:bg-subtle transition-colors"
       >
-        <span className={cn("w-2 h-2 rounded-full", state.dot)} />
+        <StatusDot className={state.dot} pulse={state.label === "Online"} />
         <span>{state.label}</span>
         {waiting > 0 && !edgeDown && (
           <span className="hidden sm:inline text-muted font-normal">· {waiting} waiting</span>
@@ -103,9 +103,12 @@ export function StatusMenu() {
 
       {open && (
         <div className="absolute right-0 top-10 z-50 w-72 card shadow-pop animate-fade-in">
-          <div className="px-4 pt-4 pb-3 border-b border-line">
-            <div className="text-sm font-semibold">{health?.author ?? "This device"}</div>
-            <div className="text-xs text-muted mt-0.5">{health?.device_id ?? "Not connected"}</div>
+          <div className="flex items-center gap-3 px-4 pt-4 pb-3 border-b border-line">
+            <Avatar name={health?.author} />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold truncate">{health?.author ?? "This device"}</div>
+              <div className="text-xs text-muted truncate">{health?.device_id ?? "Not connected"}</div>
+            </div>
           </div>
 
           <div className="p-4 space-y-4 text-sm">

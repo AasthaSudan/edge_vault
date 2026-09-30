@@ -42,7 +42,7 @@ if (-not (Test-Path $uvicorn)) { throw "Virtualenv missing. Run: python -m venv 
 
 $model   = Setting "OLLAMA_MODEL" "qwen2.5:1.5b"
 $llmHost = Setting "LLM_HOST" "http://127.0.0.1:11434"
-$syncUrl = Setting "SYNC_API_URL" "http://localhost:8080"
+$syncUrl = Setting "SYNC_API_URL" "http://127.0.0.1:8080"
 $dataRoot = Setting "DATA_ROOT" "./data"
 if ($Port -eq 0) { $Port = [int](Setting "PORT" "7001") }
 

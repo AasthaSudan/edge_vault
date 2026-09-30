@@ -1,4 +1,4 @@
-"""Phase 2 Integration Verification Script:
+"""Integration Verification Script:
 1. PII scanner & rule-based override test
 2. Near-duplicate detection & automatic merge test
 3. Shard relocation & fleet retraction test
@@ -73,10 +73,10 @@ def test_shard_relocation_and_retraction():
     print("Test 3 PASSED: Shard relocation enqueued delete retraction in outbox.")
 
 if __name__ == "__main__":
-    print("Starting Phase 2 Integration Verification...")
+    print("Starting Integration Verification...")
     test_pii_override()
     test_near_duplicate_merge()
     test_shard_relocation_and_retraction()
     print("\n==========================================")
-    print("ALL PHASE 2 INTEGRATION TESTS PASSED!")
+    print("ALL INTEGRATION TESTS PASSED!")
     print("==========================================")

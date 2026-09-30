@@ -1,4 +1,4 @@
-"""Assistant Evaluation Suite (Phase 5):
+"""Assistant Evaluation Suite:
 Evaluates on-device assistant quality across 20 questions:
 - 15 answerable questions (retrieval hit@6, citation validity, citation recall, exact value fidelity)
 - 5 unanswerable questions (refusal rate >= 80%)
