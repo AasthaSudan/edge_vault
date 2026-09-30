@@ -26,7 +26,7 @@ export function OfflineToggle() {
   const outboxDepth = data?.outbox_depth ?? 0;
 
   return (
-    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-800 bg-slate-900 text-xs font-mono">
+    <div className="flex items-center gap-2 px-2.5 py-1 rounded-md border border-slate-800 bg-slate-900 text-xs font-mono whitespace-nowrap shrink-0">
       <button
         onClick={() => mutation.mutate(!isOffline)}
         className={`flex items-center gap-1.5 transition-colors cursor-pointer ${
