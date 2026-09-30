@@ -22,7 +22,15 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { fetchEdge } from "@/lib/api";
 
-const PRIMARY_NAV = [
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  badge?: boolean;
+  desc?: string;
+}
+
+const PRIMARY_NAV: NavItem[] = [
   { name: "Overview", href: "/", icon: Layers },
   { name: "Assistant", href: "/assistant", icon: Bot },
   { name: "Memories", href: "/memories", icon: Database },
@@ -30,7 +38,7 @@ const PRIMARY_NAV = [
   { name: "Sync", href: "/sync", icon: RefreshCw },
 ];
 
-const MORE_NAV = [
+const MORE_NAV: NavItem[] = [
   { name: "Search", href: "/search", icon: Search, desc: "Hybrid dense & sparse search" },
   { name: "Conflicts", href: "/conflicts", icon: AlertTriangle, desc: "Version branch & merge" },
   { name: "Activity", href: "/activity", icon: Activity, desc: "Real-time SSE event stream" },
