@@ -33,13 +33,21 @@ def fields(devs: set[str]) -> dict:
     return {"corroborated_by": sorted(devs), "corroboration_count": len(devs), "fleet_verified": len(devs) >= 2}
 
 
+def opposed(a: str, b: str) -> bool:
+    """Opposite wording, e.g. a valve "open" in one report and "closed" in the other. A pair only
+    counts when each word sits on one side alone: "on" appears in almost every sentence, so a note
+    containing both "on" and "off" is not opposed to one that merely says "on"."""
+    wa, wb = set(re.findall(r"[a-z]+", a.lower())), set(re.findall(r"[a-z]+", b.lower()))
+    return any((x in wa and y in wb and y not in wa and x not in wb)
+               or (y in wa and x in wb and x not in wa and y not in wb) for x, y in _OPPOSITES)
+
+
 def disagree(a: str, b: str) -> bool:
     """Same topic but different values or opposite wording: not corroboration."""
     na, nb = set(_NUM.findall(a)), set(_NUM.findall(b))
     if na and nb and na != nb:
         return True
-    wa, wb = set(re.findall(r"[a-z]+", a.lower())), set(re.findall(r"[a-z]+", b.lower()))
-    return any((x in wa and y in wb) or (y in wa and x in wb) for x, y in _OPPOSITES)
+    return opposed(a, b)
 
 
 def find_independent(q: QdrantClient, coll: str, payload: dict, dense: list[float]) -> list:

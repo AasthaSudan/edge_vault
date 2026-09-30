@@ -73,14 +73,35 @@ def to_point(p: dict) -> models.PointStruct:
         }
     )
 
+TOMBSTONE_FIELDS = ("memory_id", "asset_tag", "device_id", "author", "version",
+                    "base_version", "created_at", "updated_at")
+
+
+def _as_tombstone(item) -> None:
+    """A retraction never carries content. Whatever the client sent, the server stores an empty,
+    deleted, shareable-shaped record with a constant vector, so a `delete` can neither smuggle a
+    private note past the category guard nor leave the retracted text (or its embedding) in the fleet."""
+    pl = item.point["payload"]
+    tomb = {k: pl[k] for k in TOMBSTONE_FIELDS if k in pl}
+    tomb.update(category="shareable", deleted=True, text="", title="")
+    item.point["payload"] = tomb
+    dim = len(item.point.get("vector", {}).get("dense") or [])
+    if dim:
+        item.point["vector"] = {"dense": [dim ** -0.5] * dim, "bm25": {"indices": [], "values": []}}
+
+
 @app.post("/push", dependencies=FLEET)
 def push(body: PushBody):
     accepted, found_conflicts = [], []
     for item in body.items:
+        if item.op == "delete":
+            _as_tombstone(item)
         pl = item.point["payload"]
+        pl["pushed_by"] = body.device_id  # which device wrote this version (audit, and owner of any conflict)
 
-        # 1. Defense-in-depth security guard: Never accept non-shareable memories (unless it is a delete retraction)
-        if item.op != "delete" and pl.get("category") != "shareable":
+        # 1. Defense-in-depth security guard: Never accept non-shareable memories. A delete is
+        # always rewritten to a tombstone above, so it carries no content to guard.
+        if pl.get("category") != "shareable":
             raise HTTPException(status_code=400, detail="Security violation: only shareable memories may be pushed to fleet")
 
         # 2. Check for existing version in Qdrant
@@ -95,6 +116,18 @@ def push(body: PushBody):
             accepted.append(item.memory_id)
             continue
 
+        # 3b. This device already has an unresolved conflict on this note (e.g. it edited twice offline
+        # and the first edit was rejected). A follow-up edit is based on a version the server refused,
+        # so accepting it would silently overwrite the other device's edit. It joins the open conflict:
+        # the newest text becomes the "local" side for the technician to keep or merge.
+        if cur:
+            open_conflict = conflicts.open_version_conflict(item.memory_id, body.device_id)
+            if open_conflict:
+                open_conflict = conflicts.refresh_local(open_conflict, pl)
+                # one entry per conflict, carrying the newest local text
+                found_conflicts[:] = [c for c in found_conflicts if c["id"] != open_conflict["id"]] + [open_conflict]
+                continue
+
         # 4. Version Conflict: server has a newer version from another edit
         if cur and cur.get("version", 0) > item.base_version:
             found_conflicts.append(conflicts.record("version", item.model_dump(), cur))
@@ -104,7 +137,6 @@ def push(body: PushBody):
         # by it, so a note edited offline yesterday and pushed today is still delivered.
         pl["sync_state"] = "synced"
         pl["server_ts"] = _server_ts()
-        pl["pushed_by"] = body.device_id  # which device wrote this version (audit)
         if item.op == "delete":
             pl["deleted"] = True
         else:
@@ -114,8 +146,9 @@ def push(body: PushBody):
         q.upsert(COLL, points=[to_point(item.point)])
         accepted.append(item.memory_id)
 
-        # 6. Check for semantic contradiction if first insertion
-        if item.base_version == 0:
+        # 6. Check for a contradicting report if this note is new to the server (a note shared later by
+        # a category override arrives with base_version > 0 but is just as new; a tombstone has nothing to contradict)
+        if cur is None and item.op != "delete":
             c = conflicts.check_contradiction(q, COLL, item.model_dump())
             if c:
                 found_conflicts.append(c)

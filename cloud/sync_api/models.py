@@ -1,9 +1,9 @@
-from typing import Optional, List, Dict, Any
+from typing import Literal, Optional, List, Dict, Any
 from pydantic import BaseModel
 
 class PushItem(BaseModel):
     memory_id: str
-    op: str  # 'upsert' | 'delete'
+    op: Literal["upsert", "delete"]
     point: Dict[str, Any]
     version: int
     base_version: int
@@ -14,5 +14,5 @@ class PushBody(BaseModel):
 
 class ResolveConflictRequest(BaseModel):
     conflict_id: str
-    resolution: str  # 'keep_local' | 'keep_remote' | 'merged'
+    resolution: Literal["keep_local", "keep_remote", "merged"]
     merged_text: Optional[str] = None
