@@ -68,15 +68,17 @@ def delete_session(sid: str):
 def save_message_as_memory(mid: str):
     """Save an assistant message as a memory with taint propagation (NFR-10 / FR-30)."""
     row = db.execute(
-        "SELECT id, content, sources_json, cited_json FROM chat_messages WHERE id=?",
+        "SELECT id, role, content, sources_json, cited_json FROM chat_messages WHERE id=?",
         (mid,)
     ).fetchone()
     if not row:
         raise HTTPException(status_code=404, detail="Message not found")
+    if row["role"] != "assistant":
+        raise HTTPException(status_code=400, detail="Only assistant answers can be saved as memories")
 
     text = row["content"]
-    sources = json.loads(row["sources_json"]) if row["sources_json"] else []
-    cited_ids = set(json.loads(row["cited_json"]) if row["cited_json"] else [])
+    sources = (json.loads(row["sources_json"]) if row["sources_json"] else None) or []
+    cited_ids = set((json.loads(row["cited_json"]) if row["cited_json"] else None) or [])
 
     # Collect source categories: prioritize actually cited sources
     cited_sources = [s for s in sources if s.get("memory_id") in cited_ids] or sources

@@ -1,4 +1,4 @@
-from typing import Optional, List
+from typing import Literal, Optional, List
 from pydantic import BaseModel, Field
 
 class Memory(BaseModel):
@@ -34,8 +34,8 @@ class UpdateMemoryRequest(BaseModel):
 
 class SearchRequest(BaseModel):
     q: str
-    mode: Optional[str] = "hybrid"  # hybrid | dense | bm25
+    mode: Optional[Literal["hybrid", "dense", "bm25"]] = "hybrid"
     category: Optional[str] = None
     asset_tag: Optional[str] = None
     device_id: Optional[str] = None
-    limit: Optional[int] = 10
+    limit: Optional[int] = Field(10, ge=1, le=100)

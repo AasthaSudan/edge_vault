@@ -123,12 +123,14 @@ def ask(session_id: str | None, question: str, scope: str = "device"):
                     first_token_ms = round((time.perf_counter() - t0) * 1000, 1)
                 answer.append(piece)
                 yield {"type": "token", "text": piece}
-            streamed_ok = True
+            streamed_ok = bool("".join(answer).strip())  # a stream that yields nothing is a failure too
         except Exception:
             pass
 
         if not streamed_ok:
-            # Fall back to high-fidelity extractive answering from retrieved notes
+            # Fall back to high-fidelity extractive answering from retrieved notes. Drop whatever the
+            # model produced before it failed, or the final text would be half an LLM answer + the fallback.
+            answer = []
             first_token_ms = round((time.perf_counter() - t0) * 1000, 1)
             fallback_text = _extractive_fallback_answer(question, sources)
             # Yield tokens in chunks

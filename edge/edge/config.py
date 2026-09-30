@@ -1,7 +1,9 @@
 from pathlib import Path
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="allow")
+
     device_id: str = "device-a"
     author: str = "Tech A"
     data_root: Path = Path("./data")
@@ -12,6 +14,10 @@ class Settings(BaseSettings):
     # Browser origins allowed to call this edge API. Never "*": the edge serves PRIVATE notes,
     # and any web page the technician opens could otherwise read them from localhost.
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001"
+    # Host header values this API answers to. The edge listens on loopback only; a web page can still
+    # reach it by pointing its own domain at 127.0.0.1 (DNS rebinding), and that request carries the
+    # attacker's domain in Host. "testserver" is FastAPI's TestClient.
+    allowed_hosts: str = "localhost,127.0.0.1,testserver"
     ollama_model: str = "qwen2.5:1.5b"
     llm_host: str = "http://127.0.0.1:11434"
     llm_num_ctx: int = 4096
@@ -36,6 +42,10 @@ class Settings(BaseSettings):
         return {"Authorization": f"Bearer {self.fleet_api_key}"} if self.fleet_api_key else {}
 
     @property
+    def allowed_host_list(self) -> list[str]:
+        return [h.strip() for h in self.allowed_hosts.split(",") if h.strip()]
+
+    @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip() and o.strip() != "*"]
 
@@ -44,9 +54,5 @@ class Settings(BaseSettings):
         target = self.data_root / self.device_id
         target.mkdir(parents=True, exist_ok=True)
         return target
-
-    class Config:
-        env_file = ".env"
-        extra = "allow"
 
 settings = Settings()
