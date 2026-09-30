@@ -28,8 +28,10 @@ def neighbours(dense: list[float], exclude_id: str | None = None) -> list[dict]:
             except Exception:
                 continue
 
+    # The `deleted` filter above does not match in Qdrant Edge (bool MatchValue), so drop tombstones here
     hits = [h for h in hits
-            if str(h.id) != exclude_id and h.score >= settings.gate_neighbour_min_score]
+            if str(h.id) != exclude_id and h.score >= settings.gate_neighbour_min_score
+            and not h.payload.get("deleted", False)]
     hits.sort(key=lambda h: h.score, reverse=True)
     return [{"id": str(h.id), "score": round(h.score, 3), **h.payload} for h in hits[:k]]
 

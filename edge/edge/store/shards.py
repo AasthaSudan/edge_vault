@@ -48,7 +48,8 @@ class Shard:
     """Thin thread-safe wrapper: one lock per shard, because Edge operations are synchronous."""
     def __init__(self, path: Path):
         self.path = path
-        self.lock = threading.Lock()
+        # Re-entrant: reopen() holds the lock while _init_or_recover() takes it again
+        self.lock = threading.RLock()
         self.shard = None
         self._init_or_recover()
 

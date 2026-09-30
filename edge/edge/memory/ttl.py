@@ -4,31 +4,38 @@ from qdrant_edge import ScrollRequest, Filter, FieldCondition, MatchValue, Updat
 from edge.store.shards import private
 from edge.events import emit
 
+_PAGE = 500  # points per scroll call
+
 def now_ms() -> int:
     return int(time.time() * 1000)
 
 def sweep_expired_routine() -> int:
     """Scan private shard for routine memories whose expires_at is past and remove them."""
     current_time = now_ms()
-    flt = Filter(must=[
-        FieldCondition(key="category", match=MatchValue(value="routine")),
-        FieldCondition(key="deleted", match=MatchValue(value=False))
-    ])
+    # Do not filter on `deleted`: MatchValue on a bool never matches in Qdrant Edge, so a
+    # `deleted == False` condition selects nothing and no routine note would ever expire.
+    flt = Filter(must=[FieldCondition(key="category", match=MatchValue(value="routine"))])
 
     expired_ids = []
-    with private.lock:
-        recs, _ = private.shard.scroll(ScrollRequest(
-            limit=500,
-            filter=flt,
-            with_payload=True,
-            with_vector=False
-        ))
+    next_offset = None
+    while True:  # page through every routine note, not just the first page
+        with private.lock:
+            recs, next_offset = private.shard.scroll(ScrollRequest(
+                offset=next_offset,
+                limit=_PAGE,
+                filter=flt,
+                with_payload=True,
+                with_vector=False
+            ))
         for r in recs:
             exp = r.payload.get("expires_at")
-            if exp and exp <= current_time:
+            if exp and exp <= current_time and not r.payload.get("deleted", False):
                 expired_ids.append(r.id)
+        if next_offset is None or not recs:
+            break
 
-        if expired_ids:
+    if expired_ids:
+        with private.lock:
             private.shard.update(UpdateOperation.delete_points(expired_ids))
 
     if expired_ids:
